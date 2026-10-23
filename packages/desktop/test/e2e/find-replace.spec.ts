@@ -478,7 +478,7 @@ test.describe('Find bar — Escape clears highlights and restores the cursor (it
   })
 })
 
-test.describe('Find bar — suppressed in source-code mode (item 194)', () => {
+test.describe('Find bar — shared with source-code mode', () => {
   let app: ElectronApplication
   let page: Page
 
@@ -496,14 +496,16 @@ test.describe('Find bar — suppressed in source-code mode (item 194)', () => {
     if (app) await app.close()
   })
 
-  test('the WYSIWYG search bar is not mounted while in source-code mode', async() => {
+  test('source find uses the shared search bar without searching the hidden visual editor', async() => {
     await enterSourceMode(page, app)
 
-    // The find action is forwarded but the WYSIWYG `.search-bar` is `v-if`-gated
-    // off in source mode, so it must not be present in the DOM.
     await sendIpcToRenderer(app, 'mt::editor-edit-action', 'find')
-    await page.waitForTimeout(300)
-    await expect(page.locator(SEARCH_BAR)).toHaveCount(0)
+    await expect(page.locator(SEARCH_BAR)).toBeVisible()
+    await page.locator(`${SEARCH_BAR} input`).first().fill('find me')
+    await expect(page.locator('.search-result')).toHaveText('1 / 1')
+    await expect(page.locator('.source-search-active')).toHaveCount(1)
+    await expect(page.locator('.editor-component .mu-search-match')).toHaveCount(0)
+    await page.keyboard.press('Escape')
 
     await expectNoRendererErrors(app)
     await exitSourceMode(page, app)

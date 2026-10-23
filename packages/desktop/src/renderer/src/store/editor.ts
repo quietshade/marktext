@@ -152,6 +152,8 @@ export interface EditorState {
 }
 
 const autoSaveTimers = new Map<string, ReturnType<typeof setTimeout>>()
+// Source undo uses exact saved text; restored dirty buffers have no checkpoint until saved.
+const sourceSavePoints = new WeakMap<IFileState, string>()
 
 interface OpenIntent {
   focus: boolean
@@ -203,31 +205,14 @@ export const useEditorStore = defineStore('editor', {
       if (timer) clearTimeout(timer)
       autoSaveTimers.delete(tabId)
       try {
-        if (value && this.currentFile?.id === tabId) await prepareReading()
+        if (this.currentFile?.id === tabId) {
+          this.flushActiveEditor()
+          if (value) await prepareReading()
+        }
         await window.electron.ipcRenderer.invoke('mt::set-document-read-only', tabId, value)
         if (!this.tabs.includes(tab)) return
-        if (!value && this.currentFile?.id === tabId) {
-          const preferences = usePreferencesStore()
-          preferences.SET_MODE({ type: 'sourceCode', checked: false })
-          preferences.DISPATCH_EDITOR_VIEW_STATE({ sourceCode: false })
-        }
         tab.readOnly = value
         if (this.currentFile?.id === tabId) applyReadOnly(value)
-        if (
-          !value &&
-          !tab.isSaved &&
-          !tab.diskConflict &&
-          tab.pathname &&
-          usePreferencesStore().autoSave
-        ) {
-          this.HANDLE_AUTO_SAVE(tab)
-          this.pushTabNotification({
-            tabId,
-            msg: t('readingMode.resumed'),
-            style: 'info',
-            exclusiveType: 'reading_mode'
-          })
-        }
         if (value && !tab.isSaved) {
           this.pushTabNotification({
             tabId,
@@ -722,6 +707,7 @@ export const useEditorStore = defineStore('editor', {
         }
         if (tab) {
           Object.assign(tab, { filename, pathname, isPendingCreation: false })
+          if (typeof fileInfo.savedMarkdown === 'string') sourceSavePoints.set(tab, fileInfo.savedMarkdown)
           if ('savedMarkdown' in fileInfo && fileInfo.savedMarkdown === tab.markdown)
             tab.isSaved = true
           debouncedSendBufferedState()
@@ -730,6 +716,7 @@ export const useEditorStore = defineStore('editor', {
 
       window.electron.ipcRenderer.on('mt::tab-saved', (_, tabId, savedMarkdown) => {
         const tab = this.tabs.find((f) => f.id === tabId)
+        if (tab && typeof savedMarkdown === 'string') sourceSavePoints.set(tab, savedMarkdown)
         if (tab && (savedMarkdown === undefined || tab.markdown === savedMarkdown)) {
           const lastEditIndex = tab.history.lastEditIndex
           if (
@@ -1754,6 +1741,7 @@ export const useEditorStore = defineStore('editor', {
       if (!tab || tab.readOnly) return
 
       const { pathname, markdown: oldMarkdown, trimTrailingNewline } = tab
+      if (tab.isSaved) sourceSavePoints.set(tab, oldMarkdown)
 
       markdown = adjustTrailingNewlines(markdown, trimTrailingNewline)
       tab.markdown = markdown
@@ -1787,14 +1775,17 @@ export const useEditorStore = defineStore('editor', {
         (lastEditIndex === -1 &&
           tab.lastSavedHistoryId !== -1 &&
           tab.lastSavedHistoryId !== tab.history.lastInitIndex) // Edge Case: Undo to original content (lastEditIndex === -1) after saving means we cant use the lastEditIndex. Compare it against the lastInitIndex instead.
-      const isDirty = history === undefined ? markdown !== oldMarkdown : historyMarksDirty
+      const checkpoint = sourceSavePoints.get(tab)
+      const isDirty = history === undefined
+        ? checkpoint === undefined ? !tab.isSaved || markdown !== oldMarkdown : markdown !== checkpoint
+        : historyMarksDirty
       if (isDirty) {
         tab.isPreview = false
         tab.isSaved = false
         if (pathname && autoSave && !tab.modeChanging) {
           this.HANDLE_AUTO_SAVE(tab)
         }
-      } else if (history !== undefined && tab.lastSavedHistoryId !== -1) {
+      } else if (history === undefined || tab.lastSavedHistoryId !== -1) {
         // Check here is to prevent it from overriding a restored .isSaved state
         tab.isSaved = true
       }

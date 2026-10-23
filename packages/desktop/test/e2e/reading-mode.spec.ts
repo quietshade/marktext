@@ -82,7 +82,7 @@ test('reading disables paste and all paragraph and format commands, then restore
     await expect
       .poll(async() => (await menuState()).states['/paragraphMenuEntry/looseListItemMenuItem'])
       .toBe(false)
-    await expect(page.locator('.document-mode')).toHaveCount(0)
+    await expect(page.locator('.document-mode')).toContainText('Edit Mode')
     const before = await menuState()
     expect(before.states['/pasteMenuItem']).toBe(true)
     expect(before.states['/formatMenuItem/strongMenuItem']).toBe(true)
@@ -168,32 +168,32 @@ test('dirty buffers survive locking and other tabs stay editable', async() => {
   }
 })
 
-test('unlocking default reading stays in live editing without changing the startup source preference', async() => {
+test('unlocking default reading retains source view and the startup source preference', async() => {
   const { app, page } = await launchWithMarkdown('# default reading\n', {
     preferences: { defaultOpenMode: 'read', sourceCodeModeEnabled: true }
   })
   try {
-    await expect(page.locator('.mu-read-only')).toBeVisible()
-    await expect(page.locator('.CodeMirror')).toHaveCount(0)
+    await expect(page.locator('.CodeMirror')).toBeVisible()
+    await expect.poll(() => page.locator('.CodeMirror').evaluate((host: HTMLElement & { CodeMirror: CodeMirror.Editor }) => host.CodeMirror.getOption('readOnly'))).toBe(true)
     await toggleReadingMode(page)
-    await expect(page.locator('.CodeMirror')).toHaveCount(0)
+    await expect(page.locator('.CodeMirror')).toBeVisible()
     await expect(page.locator('.mu-read-only')).toHaveCount(0)
     await expect.poll(() => app.evaluate(({ Menu }) => {
       const menu = Menu.getApplicationMenu()!
       return ['sourceCodeModeMenuItem', 'focusModeMenuItem', 'typewriterModeMenuItem']
         .map((id) => menu.getMenuItemById(id)?.enabled)
-    })).toEqual([true, true, true])
+    })).toEqual([true, false, false])
     const userData = await app.evaluate(({ app }) => app.getPath('userData'))
     expect(JSON.parse(readFileSync(join(userData, 'preferences.json'), 'utf8')).sourceCodeModeEnabled).toBe(true)
     await sendIpcToRenderer(app, 'mt::new-untitled-tab', true, 'new document\n')
-    await expect(page.locator('.CodeMirror')).toHaveCount(0)
+    await expect(page.locator('.CodeMirror')).toBeVisible()
     await expect(page.locator('.mu-read-only')).toHaveCount(0)
   } finally {
     await app.evaluate(({ app }) => app.exit(0)).catch(() => {})
   }
 })
 
-test('entering reading exits source mode and returns to live editing with the source changes intact', async() => {
+test('entering reading retains source mode and its undo history', async() => {
   const { app, page, filePath } = await launchWithMarkdown('original\n', {
     preferences: { sourceCodeModeEnabled: true }
   })
@@ -202,21 +202,22 @@ test('entering reading exits source mode and returns to live editing with the so
     await page.keyboard.press(process.platform === 'darwin' ? 'Meta+End' : 'Control+End')
     await page.keyboard.type('source edit')
     await toggleReadingMode(page)
-    await expect(page.locator('.mu-read-only')).toBeVisible()
-    await expect(page.locator('.CodeMirror')).toHaveCount(0)
-    await expect(page.locator('.editor-component')).toContainText('source edit')
+    await expect(page.locator('.document-mode')).toContainText('Reading Mode')
+    await expect(page.locator('.CodeMirror')).toBeVisible()
+    await expect(page.locator('.CodeMirror')).toContainText('source edit')
     expect(readFileSync(filePath, 'utf8')).toBe('original\n')
     await toggleReadingMode(page)
-    await expect(page.locator('.CodeMirror')).toHaveCount(0)
+    await expect(page.locator('.CodeMirror')).toBeVisible()
     await expect(page.locator('.mu-read-only')).toHaveCount(0)
-    await expect(page.locator('.editor-component')).toContainText('source edit')
+    await expect(page.locator('.CodeMirror')).toContainText('source edit')
     await expect.poll(() => app.evaluate(({ Menu }) =>
       Menu.getApplicationMenu()?.getMenuItemById('sourceCodeModeMenuItem')?.checked
-    )).toBe(false)
+    )).toBe(true)
     await sendIpcToRenderer(app, 'mt::editor-edit-action', 'undo')
-    await expect(page.locator('.editor-component')).not.toContainText('source edit')
-    await typeIntoEditor(page, 'live edit')
-    await expect(page.locator('.editor-component')).toContainText('live edit')
+    await expect(page.locator('.CodeMirror')).not.toContainText('source edit')
+    await page.locator('.CodeMirror').click()
+    await page.keyboard.type('editable again')
+    await expect(page.locator('.CodeMirror')).toContainText('editable again')
 
   } finally {
     await app.evaluate(({ app }) => app.exit(0)).catch(() => {})

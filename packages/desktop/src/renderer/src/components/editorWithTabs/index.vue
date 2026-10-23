@@ -19,8 +19,10 @@
           :muya-index-cursor="muyaIndexCursor"
           :text-direction="textDirection"
         />
+        <editor-search />
       </div>
     </div>
+    <document-mode />
     <tab-notifications />
   </div>
 </template>
@@ -33,6 +35,8 @@ import Tabs from './tabs.vue'
 import Editor from './editor.vue'
 import SourceCode from './sourceCode.vue'
 import TabNotifications from './notifications.vue'
+import DocumentMode from './documentMode.vue'
+import EditorSearch from '../search/index.vue'
 
 defineProps<{
   markdown: string
@@ -69,6 +73,7 @@ const { effectiveSideBarWidth } = storeToRefs(useLayoutStore())
   }
 }
 .document-body {
+  position: relative;
   flex: 1;
   min-width: 0;
   height: 100%;

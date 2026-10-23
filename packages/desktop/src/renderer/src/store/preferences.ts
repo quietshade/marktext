@@ -285,8 +285,8 @@ export const usePreferencesStore = defineStore('preferences', {
 
     TOGGLE_VIEW_MODE(entryName: keyof PreferencesState | string): void {
       if (
-        (useEditorStore().currentFile?.readOnly || useEditorStore().currentFile?.modeChanging) &&
-        ['sourceCode', 'typewriter', 'focus'].includes(entryName)
+        useEditorStore().currentFile?.modeChanging ||
+        (useEditorStore().currentFile?.readOnly && ['typewriter', 'focus'].includes(entryName))
       )
         return
       const target = this as unknown as Record<string, unknown>

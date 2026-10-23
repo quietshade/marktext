@@ -46,10 +46,13 @@ class AppMenu {
   private _applyDocumentMode(windowId: number, update?: (menu: Menu) => void): void {
     const menu = this.windowMenus.get(windowId)?.menu
     if (!menu) return
-    if (update) {
-      // Updates must see the underlying availability, not the reading-mode override.
-      applyReadingMenu(menu, false)
-      update(menu)
+    // Rebuilds preserve checked layout items but recreate their enabled state.
+    applyReadingMenu(menu, false)
+    if (update) update(menu)
+    const sourceMode = !!menu.getMenuItemById('sourceCodeModeMenuItem')?.checked
+    for (const id of ['focusModeMenuItem', 'typewriterModeMenuItem']) {
+      const item = menu.getMenuItemById(id)
+      if (item) item.enabled = !sourceMode
     }
     applyReadingMenu(
       menu,

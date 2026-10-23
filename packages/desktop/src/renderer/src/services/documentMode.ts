@@ -1,21 +1,21 @@
 let documentView: ((readOnly: boolean) => void) | null = null
-let sourceView: (() => Promise<void>) | null = null
+let sourceView: ((readOnly: boolean) => void) | null = null
 
 export const registerDocumentView = (view: typeof documentView): void => {
   documentView = view
 }
 
-export const registerSourceView = (view: (() => Promise<void>) | null): void => {
+export const registerSourceView = (view: typeof sourceView): void => {
   sourceView = view
 }
 
 export const prepareReading = async(): Promise<void> => {
-  if (sourceView) await sourceView()
-  documentView?.(true)
+  applyReadOnly(true)
 }
 
 export const applyReadOnly = (value: boolean): void => {
   documentView?.(value)
+  sourceView?.(value)
 }
 
 interface SourceHistoryView {

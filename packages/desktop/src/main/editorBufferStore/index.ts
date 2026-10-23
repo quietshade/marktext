@@ -89,9 +89,6 @@ class EditorBufferStore extends TypedEmitter<EditorBufferStoreEvents> {
   }
 
   handleClose(restoreBufferId: string | undefined, editorWindows: EditorWindow[]): void {
-    // If > 1 window is present, and the window being closed has all files
-    // saved, we can delete its saved buffer.
-
     if (!restoreBufferId) {
       console.warn('No restoreBufferId found for window, skipping buffer cleanup')
       return
@@ -113,7 +110,8 @@ class EditorBufferStore extends TypedEmitter<EditorBufferStoreEvents> {
       try {
         const buffer = this.readBufferStoreFile(this.bufferStores[restoreBufferId].filePath)
         const allSaved = buffer.tabs.every((file) => file.isSaved && !file.isPendingCreation)
-        if (buffer.tabs.length === 0 || allSaved) {
+        // Open folders are session state even when every document is saved.
+        if (allSaved && readBufferedRoots(buffer.project).length === 0) {
           fs.unlinkSync(this.bufferStores[restoreBufferId].filePath)
           delete this.bufferStores[restoreBufferId]
         }

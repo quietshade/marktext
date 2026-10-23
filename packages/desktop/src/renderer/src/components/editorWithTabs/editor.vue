@@ -66,7 +66,6 @@
         </div>
       </template>
     </el-dialog>
-    <editor-search v-if="!sourceCode" />
   </div>
 </template>
 
@@ -113,7 +112,6 @@ import {
 import { getMuyaLocale } from '@/util/muyaLocale'
 import { exportStyledHTML, type HeaderFooterPart } from '@/util/exportHtml'
 import { applyCursor, isIndexCursor } from '@/util/cursor'
-import EditorSearch from '../search/index.vue'
 import MediaViewer from '../mediaViewer/index.vue'
 import bus from '@/bus'
 import { DEFAULT_EDITOR_FONT_FAMILY, DEFAULT_CODE_FONT_FAMILY } from '@/config'
@@ -244,7 +242,7 @@ const {
 } = storeToRefs(preferencesStore)
 
 const { currentFile, tabs } = storeToRefs(editorStore)
-const sourceCode = computed(() => sourceCodePreference.value && !currentFile.value?.readOnly)
+const sourceCode = sourceCodePreference
 const typewriter = computed(() => typewriterPreference.value && !currentFile.value?.readOnly)
 const focus = computed(() => focusPreference.value && !currentFile.value?.readOnly)
 let loadingContent = false
@@ -1008,6 +1006,7 @@ const openSpellcheckerLanguageCommand = () => {
 }
 
 const replaceMisspelling = (payload: unknown) => {
+  if (sourceCode.value || currentFile.value?.readOnly || currentFile.value?.modeChanging) return
   const { word, replacement } = payload as { word: string; replacement: string }
   if (editor.value) {
     editor.value.replaceCurrentWordInlineUnsafe(word, replacement)
@@ -1015,7 +1014,7 @@ const replaceMisspelling = (payload: unknown) => {
 }
 
 const handleUndo = () => {
-  if (sourceCode.value) {
+  if (sourceCode.value || currentFile.value?.readOnly || currentFile.value?.modeChanging) {
     return
   }
 
@@ -1025,7 +1024,7 @@ const handleUndo = () => {
 }
 
 const handleRedo = () => {
-  if (sourceCode.value) {
+  if (sourceCode.value || currentFile.value?.readOnly || currentFile.value?.modeChanging) {
     return
   }
 
@@ -1060,6 +1059,8 @@ const COPY_PASTE_METHOD_MAP: Record<string, 'copyAsRich' | 'copyAsHtml' | 'paste
   pasteAsPlainText: 'pasteAsPlainText'
 }
 const handleCopyPaste = (type: unknown) => {
+  if (sourceCode.value) return
+  if (type === 'pasteAsPlainText' && (currentFile.value?.readOnly || currentFile.value?.modeChanging)) return
   if (editor.value) {
     const method = COPY_PASTE_METHOD_MAP[type as string]
     if (method) editor.value[method]()
@@ -1090,20 +1091,20 @@ const toSearchMatches = (result: unknown) => {
 }
 
 const handleSearch = (payload: unknown) => {
-  if (!editor.value) return
+  if (!editor.value || sourceCode.value) return
   const { value, opt } = payload as { value: string; opt?: ISearchOption }
   editorStore.SEARCH(toSearchMatches(editor.value.search(value, opt)))
   scrollToHighlight()
 }
 
 const handReplace = (payload: unknown) => {
-  if (!editor.value) return
+  if (!editor.value || sourceCode.value || currentFile.value?.readOnly || currentFile.value?.modeChanging) return
   const { value, opt } = payload as { value: string; opt?: IReplaceOption }
   editorStore.SEARCH(toSearchMatches(editor.value.replace(value, opt)))
 }
 
 const handleFindAction = (action: unknown) => {
-  if (!editor.value) return
+  if (!editor.value || sourceCode.value) return
   editorStore.SEARCH(toSearchMatches(editor.value.find(action as 'previous' | 'next')))
   scrollToHighlight()
 }
@@ -1376,7 +1377,7 @@ const pushSelectionMenuState = (changes: MuyaChange) => {
 }
 
 const handleEditParagraph = (type: unknown) => {
-  if (sourceCode.value) {
+  if (sourceCode.value || currentFile.value?.readOnly || currentFile.value?.modeChanging) {
     return
   }
   if (type === 'table') {
@@ -1398,7 +1399,7 @@ const handleEditParagraph = (type: unknown) => {
 }
 
 const handleParagraph = (type: unknown) => {
-  if (sourceCode.value) {
+  if (sourceCode.value || currentFile.value?.readOnly || currentFile.value?.modeChanging) {
     return
   }
   if (editor.value) {
@@ -1419,7 +1420,7 @@ const handleParagraph = (type: unknown) => {
 }
 
 const handleInlineFormat = (type: unknown) => {
-  if (sourceCode.value) {
+  if (sourceCode.value || currentFile.value?.readOnly || currentFile.value?.modeChanging) {
     return
   }
   editor.value && editor.value.format(type as string)
@@ -1427,6 +1428,7 @@ const handleInlineFormat = (type: unknown) => {
 
 const handleDialogTableConfirm = () => {
   dialogTableVisible.value = false
+  if (sourceCode.value || currentFile.value?.readOnly || currentFile.value?.modeChanging) return
   editor.value && editor.value.createTable(tableChecker)
 }
 
@@ -1594,12 +1596,14 @@ const blurEditor = () => {
 }
 
 const flushActiveEditor = () => {
+  if (sourceCode.value) return
   editor.value?.flush()
 }
 
 // The engine's `focus()` only sets the selection range; the contenteditable
 // also needs DOM focus or no caret blinks.
 const focusEditor = () => {
+  if (sourceCode.value) return
   const ed = editor.value
   if (!ed) return
   ed.domNode.focus()
@@ -1637,6 +1641,7 @@ const handleModalOpening = () => {
 
 // Chromium no longer fires programmatic paste; insert the saved screenshot via imageAction.
 const handleScreenShot = (filePath?: unknown) => {
+  if (sourceCode.value || currentFile.value?.readOnly || currentFile.value?.modeChanging) return
   if (editor.value && typeof filePath === 'string' && filePath) {
     editor.value.pasteImage(filePath)
   }
@@ -1865,7 +1870,7 @@ onMounted(() => {
 
   // Engine json-change emits operations; the desktop pipeline consumes a derived document snapshot.
   editor.value.on('json-change', () => {
-    if (loadingContent || currentFile.value?.readOnly) return
+    if (loadingContent || sourceCode.value || currentFile.value?.readOnly) return
     // Capture the tab ID before a later tab switch can redirect this update.
     if (!currentFile.value || !editor.value) return
     const { id } = currentFile.value

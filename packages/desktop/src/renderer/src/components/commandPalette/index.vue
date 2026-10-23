@@ -155,7 +155,8 @@ const searcherBusy = ref(false)
 
 const commandCenterStore = useCommandCenterStore()
 const editorStore = useEditorStore()
-const canRun = (id: string) => !editorStore.currentFile?.readOnly || isReadingCommandAllowed(id)
+const canRun = (id: string) =>
+  !(editorStore.currentFile?.readOnly || editorStore.currentFile?.modeChanging) || isReadingCommandAllowed(id)
 
 const noResultsText = computed(() =>
   query.value.trim()

@@ -76,7 +76,8 @@ export const useCommandCenterStore = defineStore('commandCenter', () => {
 })
 
 const executeCommand = (root: Root, commandId: string): void => {
-  if (useEditorStore().currentFile?.readOnly && !isReadingCommandAllowed(commandId)) return
+  const tab = useEditorStore().currentFile
+  if ((tab?.readOnly || tab?.modeChanging) && !isReadingCommandAllowed(commandId)) return
   const { subcommands } = root
   const command = subcommands.find((c) => c.id === commandId)
   if (!command) {

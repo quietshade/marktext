@@ -6,8 +6,8 @@ import { useLayoutStore } from './layout'
 export const useListenForMainStore = defineStore('listenForMain', () => {
   function EDITOR_EDIT_ACTION(type: string): void {
     if (
-      useEditorStore().currentFile?.readOnly &&
-      !['copy', 'copyAsRich', 'copyAsHtml', 'selectAll', 'findInFolder'].includes(type)
+      (useEditorStore().currentFile?.readOnly || useEditorStore().currentFile?.modeChanging) &&
+      !['copy', 'copyAsRich', 'copyAsHtml', 'selectAll', 'findInFolder', 'find', 'findNext', 'findPrev'].includes(type)
     )
       return
     const layoutStore = useLayoutStore()
@@ -47,9 +47,11 @@ export const useListenForMainStore = defineStore('listenForMain', () => {
 
   function LISTEN_FOR_PARAGRAPH_INLINE_STYLE(): void {
     window.electron.ipcRenderer.on('mt::editor-paragraph-action', (_e, { type }) => {
+      if (useEditorStore().currentFile?.readOnly || useEditorStore().currentFile?.modeChanging) return
       bus.emit('paragraph', type)
     })
     window.electron.ipcRenderer.on('mt::editor-format-action', (_e, { type }) => {
+      if (useEditorStore().currentFile?.readOnly || useEditorStore().currentFile?.modeChanging) return
       bus.emit('format', type)
     })
   }

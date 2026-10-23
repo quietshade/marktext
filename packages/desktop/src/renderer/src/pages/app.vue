@@ -24,7 +24,7 @@
         :markdown="markdown"
         :cursor="cursor"
         :muya-index-cursor="muyaIndexCursor"
-        :source-code="sourceCode && !currentFile?.readOnly"
+        :source-code="sourceCode"
         :show-tab-bar="showTabBar"
         :text-direction="textDirection"
         :platform="platform"

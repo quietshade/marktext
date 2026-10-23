@@ -4,6 +4,8 @@ Review date: **23 October 2026**. Requirements: [project brief](README.md) and [
 
 Follow-up: [Stage 0.5 UI test investigation](ui-test-investigation.md) records the environment diagnosis, test-harness fixes and completed UI smoke results. The Stage 0 results below remain the historical record of that run.
 
+[Stage 1 implementation and validation](stage-1-viewer-mode.md) records the Viewer Mode changes and maps their evidence to S1-01 through S1-09 below. This baseline remains a historical snapshot.
+
 ## Baseline identity and evidence rules
 
 | Item                         | Recorded baseline                                                                         |
