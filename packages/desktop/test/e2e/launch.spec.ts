@@ -13,11 +13,15 @@ test.describe('Check Launch MarkText', () => {
   })
 
   test.afterAll(async() => {
-    await app.close()
+    if (app) await app.close()
   })
 
   test('Empty MarkText', async() => {
     const title = await page.title()
     expect(/^MarkText|Untitled-1 - MarkText$/.test(title)).toBeTruthy()
+  })
+
+  test('Electron launches without the Node-only environment flag', async() => {
+    expect(await app.evaluate(() => process.env.ELECTRON_RUN_AS_NODE)).toBeUndefined()
   })
 })

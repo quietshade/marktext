@@ -3,6 +3,9 @@ import { _electron, type ElectronApplication, type Page } from 'playwright'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { createElectronEnvironment } from './electronEnvironment'
+
+export { createElectronEnvironment } from './electronEnvironment'
 
 const projectRoot = path.resolve(__dirname, '../..')
 
@@ -22,9 +25,6 @@ const getTempPath = (suffix = ''): string => {
 }
 
 export const getElectronPath = (): string => {
-  if (process.platform === 'win32') {
-    return path.resolve(path.join('node_modules', '.bin', 'electron.cmd'))
-  }
   const pathTxt = path.join(projectRoot, 'node_modules/electron/path.txt')
   const relPath = fs.readFileSync(pathTxt, 'utf-8').trim()
   return path.join(projectRoot, 'node_modules/electron/dist', relPath)
@@ -92,10 +92,10 @@ export const launchElectron = async(
     }
   }
   const args = [projectRoot, '--user-data-dir', userDataDir].concat(userArgs)
-  const env: Record<string, string> = {}
-  for (const [k, v] of Object.entries(process.env)) if (v !== undefined) env[k] = v
-  if (options.suppressErrorDialog) env.MARKTEXT_ERROR_INTERACTION = '1'
-  Object.assign(env, options.env)
+  const env = createElectronEnvironment(process.env, {
+    ...(options.suppressErrorDialog ? { MARKTEXT_ERROR_INTERACTION: '1' } : {}),
+    ...options.env
+  })
   const app = await _electron.launch({
     executablePath,
     args,
@@ -103,11 +103,16 @@ export const launchElectron = async(
     env,
     timeout: 30000
   })
-  if (options.suppressErrorDialog) await installRendererErrorCounter(app)
-  const page = await app.firstWindow()
-  await page.waitForLoadState('domcontentloaded')
-  await new Promise((resolve) => setTimeout(resolve, 500))
-  return { app, page }
+  try {
+    if (options.suppressErrorDialog) await installRendererErrorCounter(app)
+    const page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    return { app, page }
+  } catch (error) {
+    await app.close().catch(() => {})
+    throw error
+  }
 }
 
 // Capture renderer-process errors that would otherwise pop the "Unexpected
@@ -249,7 +254,9 @@ export const openProjectFolder = async(
     if (!win) throw new Error('no editor window')
     ipcMain.emit('app-open-directory-by-id', win.id, target, true)
   }, root)
-  await page.waitForSelector(`.tree-wrapper .side-bar-file[title="${marker}"]`, { timeout })
+  await page.locator('.tree-wrapper .side-bar-file')
+    .and(page.getByTitle(marker, { exact: true }))
+    .waitFor({ state: 'visible', timeout })
 }
 
 export const toggleReadingMode = async(page: Page): Promise<void> => {

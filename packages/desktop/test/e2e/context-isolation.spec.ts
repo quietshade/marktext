@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import type { ElectronApplication, Page } from 'playwright'
+import type { WebPreferences } from 'electron'
 import { launchElectron } from './helpers'
 
 // Asserts the renderer is actually sandboxed: contextIsolation: true,
@@ -22,6 +23,25 @@ test.describe('Renderer sandboxing', () => {
   })
 
   test('contextBridge active, nodeIntegration disabled, no preload leakage', async() => {
+    const preferences = await app.evaluate(({ BrowserWindow }) => {
+      const contents = BrowserWindow.getAllWindows()[0].webContents as Electron.WebContents & {
+        getLastWebPreferences: () => WebPreferences
+      }
+      const prefs = contents.getLastWebPreferences()
+      return {
+        sandbox: prefs.sandbox,
+        contextIsolation: prefs.contextIsolation,
+        nodeIntegration: prefs.nodeIntegration,
+        webSecurity: prefs.webSecurity
+      }
+    })
+    expect(preferences).toEqual({
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: true
+    })
+
     expect(await page.evaluate(() => typeof window.electron?.ipcRenderer?.invoke)).toBe('function')
 
     expect(await page.evaluate(() => typeof require)).toBe('undefined')

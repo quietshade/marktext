@@ -2,6 +2,8 @@
 
 Review date: **23 October 2026**. Requirements: [project brief](README.md) and [specification v1.0](specs.md). This is an inspection and verification record, not a claim that the proposed enhancements have been implemented.
 
+Follow-up: [Stage 0.5 UI test investigation](ui-test-investigation.md) records the environment diagnosis, test-harness fixes and completed UI smoke results. The Stage 0 results below remain the historical record of that run.
+
 ## Baseline identity and evidence rules
 
 | Item                         | Recorded baseline                                                                         |

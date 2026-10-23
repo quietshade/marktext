@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { expect, test } from '@playwright/test'
-import { getElectronPath, launchWithMarkdown } from './helpers'
+import { createElectronEnvironment, getElectronPath, launchWithMarkdown } from './helpers'
 
 // #3020: the `argv` of the `second-instance` event lists switches before the
 // other arguments and adds switches of its own, so `second.md --user-data-dir
@@ -74,7 +74,7 @@ test('a second instance started with --user-data-dir opens its file in the runni
   const secondInstance = spawn(
     getElectronPath(),
     [projectRoot, 'second.md', '--user-data-dir', userDataDir, ...sandboxArgs],
-    { cwd: docDir, env: { ...process.env, PERF_TESTING: 'true' } }
+    { cwd: docDir, env: createElectronEnvironment(process.env, { PERF_TESTING: 'true' }) }
   )
   try {
     const { code, signal, output } = await waitForExit(secondInstance, 15000)
