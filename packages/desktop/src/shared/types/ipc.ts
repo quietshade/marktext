@@ -291,6 +291,7 @@ export interface IpcMainEventChannels {
   'mt::show-command-palette': []
   'mt::show-export-dialog': [type: ExportType]
   'mt::show-notification': [payload: unknown]
+  'mt::sidebar-open-failed': [requestId: number, pathname: string]
   'mt::spelling-replace-misspelling': [payload: unknown]
   'mt::spelling-show-switch-language': []
   'mt::switch-tab-by-file_path': [filePath: string, options?: TabOptions]

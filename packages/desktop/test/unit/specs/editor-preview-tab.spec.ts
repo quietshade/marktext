@@ -40,6 +40,27 @@ const currentFile = (store: EditorStore) => {
   return store.currentFile
 }
 
+const capturePromotionIds = (store: EditorStore, pathname: string, requestId: number): Set<number> => {
+  const add = vi.spyOn(Set.prototype, 'add')
+  try {
+    store.FOCUS_FILE(pathname)
+    const index = add.mock.calls.findIndex(([value]) => value === requestId)
+    const ids = add.mock.contexts[index]
+    if (!(ids instanceof Set)) throw new Error('The pending promotion was not recorded')
+    return ids as Set<number>
+  } finally {
+    add.mockRestore()
+  }
+}
+
+const failOpen = (requestId: number, pathname: string): void => {
+  for (const [channel, listener] of vi.mocked(window.electron.ipcRenderer.on).mock.calls) {
+    if (channel === 'mt::sidebar-open-failed') {
+      (listener as unknown as (...args: unknown[]) => void)({}, requestId, pathname)
+    }
+  }
+}
+
 describe('sidebar preview tabs', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
@@ -144,6 +165,116 @@ describe('sidebar preview tabs', () => {
     expect(store.tabs).toHaveLength(2)
     expect(store.tabs.find(tab => tab.pathname === '/notes/pinned.md')?.isPreview).toBe(false)
     expect(store.tabs.find(tab => tab.pathname === '/notes/next.md')?.isPreview).toBe(true)
+  })
+
+  it('releases every failed promotion instead of accumulating renderer request IDs', () => {
+    const store = useEditorStore()
+    store.LISTEN_FOR_NEW_TAB()
+    const requests: Array<{ id: number; pathname: string; ids: Set<number> }> = []
+    try {
+      for (let index = 0; index < 3; index++) {
+        const pathname = `/notes/unavailable-${index}.md`
+        const id = beginOpen(store, pathname)
+        const ids = capturePromotionIds(store, pathname, id)
+        requests.push({ id, pathname, ids })
+        expect(ids.has(id)).toBe(true)
+        failOpen(id, pathname)
+      }
+      expect(requests.filter(({ id, ids }) => ids.has(id)).map(({ id }) => id)).toEqual([])
+      expect(requests.map(({ pathname }) => store.PEEK_OPEN_INTENT(pathname))).toEqual([null, null, null])
+      expect(store.tabs).toHaveLength(0)
+    } finally {
+      for (const { id, pathname, ids } of requests) {
+        ids.delete(id)
+        store.DISCARD_OPEN_INTENT(pathname)
+      }
+    }
+  })
+
+  it('releases a successful queued promotion only when its document is delivered', () => {
+    const store = useEditorStore()
+    const pathname = '/notes/delivered.md'
+    const id = beginOpen(store, pathname)
+    const ids = capturePromotionIds(store, pathname, id)
+    const next = beginOpen(store, '/notes/next.md')
+    store.NEW_TAB_WITH_CONTENT({ markdownDocument: documentFor('next'), options: { preview: true, requestId: next } })
+    expect(ids.has(id)).toBe(true)
+    store.NEW_TAB_WITH_CONTENT({ markdownDocument: documentFor('delivered'), options: { preview: true, requestId: id } })
+    expect(ids.has(id)).toBe(false)
+    expect(store.tabs.find(tab => tab.pathname === pathname)?.isPreview).toBe(false)
+    expect(store.tabs).toHaveLength(2)
+  })
+
+  it('a failed promotion leaves other promotions and the newest preview pending', () => {
+    const store = useEditorStore()
+    store.LISTEN_FOR_NEW_TAB()
+    const firstPath = '/notes/failed.md'
+    const first = beginOpen(store, firstPath)
+    const ids = capturePromotionIds(store, firstPath, first)
+    const secondPath = '/notes/retained.md'
+    const second = beginOpen(store, secondPath)
+    store.FOCUS_FILE(secondPath)
+    const third = beginOpen(store, '/notes/next.md')
+    failOpen(first, firstPath)
+    expect(ids.has(first)).toBe(false)
+    expect(ids.has(second)).toBe(true)
+    expect(store.IS_LATEST_SIDEBAR_OPEN(third, '/notes/next.md')).toBe(true)
+    store.NEW_TAB_WITH_CONTENT({ markdownDocument: documentFor('next'), options: { preview: true, requestId: third } })
+    store.NEW_TAB_WITH_CONTENT({ markdownDocument: documentFor('retained'), options: { preview: true, requestId: second } })
+    expect(ids.has(second)).toBe(false)
+    expect(store.tabs.find(tab => tab.pathname === secondPath)?.isPreview).toBe(false)
+    expect(store.tabs.find(tab => tab.pathname === '/notes/next.md')?.isPreview).toBe(true)
+  })
+
+  it('an older failure cannot clear a newer promoted retry of the same path', () => {
+    const store = useEditorStore()
+    store.LISTEN_FOR_NEW_TAB()
+    const pathname = '/notes/retry.md'
+    const first = beginOpen(store, pathname)
+    const ids = capturePromotionIds(store, pathname, first)
+    const retry = beginOpen(store, pathname)
+    store.FOCUS_FILE(pathname)
+    failOpen(first, pathname)
+    expect(ids.has(first)).toBe(false)
+    expect(ids.has(retry)).toBe(true)
+    expect(store.PEEK_OPEN_INTENT(pathname)).toMatchObject({ focus: true, preview: false })
+    const next = beginOpen(store, '/notes/next.md')
+    store.NEW_TAB_WITH_CONTENT({ markdownDocument: documentFor('next'), options: { preview: true, requestId: next } })
+    store.NEW_TAB_WITH_CONTENT({ markdownDocument: documentFor('retry'), options: { preview: true, requestId: retry } })
+    expect(ids.has(retry)).toBe(false)
+    expect(store.tabs.find(tab => tab.pathname === pathname)?.isPreview).toBe(false)
+    expect(store.tabs).toHaveLength(2)
+  })
+
+  it('a failed unpromoted open permits an immediate retry without touching a newer request', () => {
+    const store = useEditorStore()
+    store.LISTEN_FOR_NEW_TAB()
+    const pathname = '/notes/retry.md'
+    const first = beginOpen(store, pathname)
+    failOpen(first, pathname)
+    expect(store.PEEK_OPEN_INTENT(pathname)).toBeNull()
+    const retry = beginOpen(store, pathname)
+    failOpen(first, pathname)
+    expect(store.IS_LATEST_SIDEBAR_OPEN(retry, pathname)).toBe(true)
+    expect(store.PEEK_OPEN_INTENT(pathname)).toMatchObject({ focus: false, preview: true })
+    store.NEW_TAB_WITH_CONTENT({ markdownDocument: documentFor('retry'), options: { preview: true, requestId: retry } })
+    expect(store.currentFile?.isPreview).toBe(true)
+  })
+
+  it('cancelling a later preview does not discard an earlier pending promotion', () => {
+    const store = useEditorStore()
+    const pathname = '/notes/pinned.md'
+    const pinned = beginOpen(store, pathname)
+    const ids = capturePromotionIds(store, pathname, pinned)
+    const canceled = beginOpen(store, '/notes/canceled.md')
+    store.CANCEL_PENDING_SIDEBAR_OPEN()
+    expect(ids.has(pinned)).toBe(true)
+    store.NEW_TAB_WITH_CONTENT({ markdownDocument: documentFor('canceled'), options: { preview: true, requestId: canceled } })
+    expect(store.tabs).toHaveLength(0)
+    store.NEW_TAB_WITH_CONTENT({ markdownDocument: documentFor('pinned'), options: { preview: true, requestId: pinned } })
+    expect(ids.has(pinned)).toBe(false)
+    expect(store.tabs).toHaveLength(1)
+    expect(store.currentFile?.isPreview).toBe(false)
   })
 
   it('layout and permission changes do not pin a temporary tab', async() => {

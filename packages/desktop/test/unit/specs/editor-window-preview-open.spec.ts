@@ -35,8 +35,8 @@ describe('main-process sidebar open ownership', () => {
     return { editor, send }
   }
 
-  const open = (editor: EditorWindow, name: string, requestId: number) => {
-    editor.openTab(`/notes/${name}.md`, { preview: true, requestId })
+  const open = (editor: EditorWindow, name: string, requestId: number, preview = true) => {
+    editor.openTab(`/notes/${name}.md`, { preview, requestId })
   }
   const finish = async(name: string, reject = false) => {
     const pathname = `/notes/${name}.md`
@@ -73,12 +73,55 @@ describe('main-process sidebar open ownership', () => {
     expect(error).not.toHaveBeenCalled()
   })
 
+  it('reports the exact failed promoted request while keeping the existing error notification', async() => {
+    const { editor, send } = create()
+    for (const id of [1, 2, 3]) {
+      open(editor, `unavailable-${id}`, id)
+      editor.promotePendingPreview(id)
+      await finish(`unavailable-${id}`, true)
+    }
+    expect(send.mock.calls.filter(([channel]) => channel === 'mt::sidebar-open-failed')).toEqual([
+      ['mt::sidebar-open-failed', 1, '/notes/unavailable-1.md'],
+      ['mt::sidebar-open-failed', 2, '/notes/unavailable-2.md'],
+      ['mt::sidebar-open-failed', 3, '/notes/unavailable-3.md']
+    ])
+    expect(send.mock.calls.filter(([channel]) => channel === 'mt::show-notification')).toHaveLength(3)
+    expect(send.mock.calls.filter(([channel]) => channel === 'mt::open-new-tab')).toHaveLength(0)
+  })
+
+  it('a failed older read does not remove the newer pending promotion of the same path', async() => {
+    const { editor, send } = create()
+    open(editor, 'retry', 1)
+    editor.promotePendingPreview(1)
+    const first = pending.get('/notes/retry.md')
+    if (!first) throw new Error('Missing first read')
+    open(editor, 'retry', 2)
+    editor.promotePendingPreview(2)
+    first.reject(new Error('Read failed'))
+    await Promise.resolve()
+    await Promise.resolve()
+    await finish('retry')
+    expect(send).toHaveBeenCalledWith('mt::sidebar-open-failed', 1, '/notes/retry.md')
+    expect(send.mock.calls.filter(([channel]) => channel === 'mt::open-new-tab').map(([, , options]) => options)).toEqual([
+      { preview: false, requestId: 2, readOnly: false }
+    ])
+  })
+
+  it('also identifies failed sidebar opens when temporary preview tabs are disabled', async() => {
+    const { editor, send } = create()
+    open(editor, 'disabled-preview', 1, false)
+    await finish('disabled-preview', true)
+    expect(send).toHaveBeenCalledWith('mt::sidebar-open-failed', 1, '/notes/disabled-preview.md')
+  })
+
   it.each([
     { action: 'destroy', reject: false }, { action: 'destroy', reject: true },
     { action: 'reload', reject: false }, { action: 'reload', reject: true }
-  ] as const)('cancels promoted reads on $action (read fails: $reject)', async({ action, reject }) => {
+  ].flatMap(value => [true, false].map(preview => ({ ...value, preview }))) as Array<{
+    action: 'destroy' | 'reload'; reject: boolean; preview: boolean
+  }>)('cancels promoted reads on $action (read fails: $reject, preview: $preview)', async({ action, reject, preview }) => {
     const { editor, send } = create()
-    open(editor, 'a', 1)
+    open(editor, 'a', 1, preview)
     editor.promotePendingPreview(1)
     editor[action]()
     // A completed reload has a live window again, but belongs to a fresh renderer session.

@@ -159,6 +159,7 @@ const sourceSavePoints = new WeakMap<IFileState, string>()
 interface OpenIntent {
   focus: boolean
   preview: boolean
+  requestId?: number
 }
 
 // A pathname can change from preview to pinned while its file is loading, so
@@ -1095,6 +1096,14 @@ export const useEditorStore = defineStore('editor', {
     },
 
     LISTEN_FOR_NEW_TAB(): void {
+      window.electron.ipcRenderer.on('mt::sidebar-open-failed', (_, requestId, pathname) => {
+        promotedSidebarRequests.delete(requestId)
+        this.SETTLE_SIDEBAR_OPEN(requestId, pathname)
+        // A delayed failure must not erase the intent of a newer open of the same path.
+        if (this.PEEK_OPEN_INTENT(pathname)?.requestId === requestId) {
+          this.DISCARD_OPEN_INTENT(pathname)
+        }
+      })
       window.electron.ipcRenderer.on(
         'mt::open-new-tab',
         (_, markdownDocument, options = {}, selected = true) => {
@@ -1365,8 +1374,8 @@ export const useEditorStore = defineStore('editor', {
       this.UPDATE_CURRENT_FILE(nextTab)
     },
 
-    SET_OPEN_INTENT(pathname: string, focus: boolean, preview = false): void {
-      openIntents.set(pathname, { focus, preview })
+    SET_OPEN_INTENT(pathname: string, focus: boolean, preview = false, requestId?: number): void {
+      openIntents.set(pathname, { focus, preview, requestId })
     },
 
     PEEK_OPEN_INTENT(pathname: string | null | undefined): OpenIntent | null {
@@ -1405,7 +1414,7 @@ export const useEditorStore = defineStore('editor', {
 
       const requestId = ++sidebarRequestSequence
       latestSidebarRequest = { id: requestId, pathname }
-      this.SET_OPEN_INTENT(pathname, false, preview)
+      this.SET_OPEN_INTENT(pathname, false, preview, requestId)
       return requestId
     },
 

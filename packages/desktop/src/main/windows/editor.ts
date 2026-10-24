@@ -353,8 +353,9 @@ class EditorWindow extends BaseWindow {
       preferences.getAll()
 
     for (const { filePath, options, selected } of fileList) {
-      const isPreview = options.preview === true && typeof options.requestId === 'number'
-      const previewRequestId = isPreview ? (options.requestId as number) : null
+      const sidebarRequestId = typeof options.requestId === 'number' ? options.requestId : null
+      const isPreview = options.preview === true && sidebarRequestId !== null
+      const previewRequestId = isPreview ? sidebarRequestId : null
       if (previewRequestId !== null) {
         const pendingRequestId = this._pendingPreviewPaths.get(filePath)?.requestId
         if (pendingRequestId !== undefined) {
@@ -389,8 +390,8 @@ class EditorWindow extends BaseWindow {
           : loadMarkdownFile.bind(null, filePath)
       load(eol, autoGuessEncoding, trimTrailingNewline, autoNormalizeLineEndings)
         .then((rawDocument) => {
+          if (sidebarRequestId !== null && previewRequestGeneration !== this._previewRequestGeneration) return
           if (previewRequestId !== null) {
-            if (previewRequestGeneration !== this._previewRequestGeneration) return
             const currentPendingRequestId = this._pendingPreviewPaths.get(filePath)?.requestId
             if (currentPendingRequestId === previewRequestId) this._pendingPreviewPaths.delete(filePath)
             // Promotion changes the open's ownership even if another preview has started.
@@ -403,13 +404,16 @@ class EditorWindow extends BaseWindow {
           }
         })
         .catch((err: Error) => {
-          if (previewRequestId !== null && previewRequestGeneration !== this._previewRequestGeneration) return
+          if (sidebarRequestId !== null && previewRequestGeneration !== this._previewRequestGeneration) return
           if (previewRequestId !== null) {
             if (this._pendingPreviewPaths.get(filePath)?.requestId === previewRequestId) {
               this._pendingPreviewPaths.delete(filePath)
             }
           } else {
             this._openedFiles = this._openedFiles!.filter((p) => p !== filePath)
+          }
+          if (sidebarRequestId !== null) {
+            browserWindow?.webContents.send('mt::sidebar-open-failed', sidebarRequestId, filePath)
           }
           const { message, stack } = err
           log.error(`[ERROR] Cannot open file or directory: ${message}\n\n${stack}`)
