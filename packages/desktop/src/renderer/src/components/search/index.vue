@@ -155,7 +155,6 @@ import FindCaseIcon from '@/assets/icons/searchIcons/iconCase.svg'
 import FindWordIcon from '@/assets/icons/searchIcons/iconWord.svg'
 import FindRegexIcon from '@/assets/icons/searchIcons/iconRegex.svg'
 import { useEditorStore } from '@/store/editor'
-import { usePreferencesStore } from '@/store/preferences'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
 import debounce from 'lodash/debounce'
@@ -177,7 +176,7 @@ const searchErrorMsg = ref('')
 const search = ref<HTMLInputElement | null>(null)
 
 const { currentFile } = storeToRefs(editorStore)
-const locked = computed(() => !!(currentFile.value?.readOnly || currentFile.value?.modeChanging))
+const locked = computed(() => editorStore.documentEditingBlocked)
 watch(
   locked,
   (value) => {
@@ -185,7 +184,7 @@ watch(
   }
 )
 watch(() => currentFile.value?.id, () => emptySearch(false))
-watch(() => usePreferencesStore().sourceCode, () => {
+watch(() => editorStore.documentLayout, () => {
   if (showSearch.value) nextTick(searchFn)
 })
 const searchMatches = computed(() => currentFile.value?.searchMatches)

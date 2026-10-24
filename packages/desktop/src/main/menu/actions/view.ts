@@ -1,6 +1,7 @@
 import { ipcMain, type BrowserWindow, type Menu, type MenuItem } from 'electron'
 import { COMMANDS } from '../../commands'
 import type { CommandManager } from '../../commands'
+import type { AvailableDocumentLayout } from '@shared/types/documentLayout'
 
 type Win = BrowserWindow | null | undefined
 
@@ -51,6 +52,10 @@ export const toggleSourceCodeMode = (win: Win): void => {
   toggleTypeMode(win, 'sourceCode')
 }
 
+export const setDocumentLayout = (win: Win, layout: AvailableDocumentLayout): void => {
+  win?.webContents.send('mt::set-document-layout', layout)
+}
+
 export const toggleSidebar = (win: Win): void => {
   toggleLayout(win, 'showSideBar')
 }
@@ -86,6 +91,9 @@ export const loadViewCommands = (commandManager: CommandManager): void => {
   commandManager.add(COMMANDS.VIEW_FOCUS_MODE, toggleFocusMode)
   commandManager.add(COMMANDS.VIEW_FORCE_RELOAD_IMAGES, reloadImageCache)
   commandManager.add(COMMANDS.VIEW_SOURCE_CODE_MODE, toggleSourceCodeMode)
+  commandManager.add(COMMANDS.VIEW_LAYOUT_WYSIWYG, win => setDocumentLayout(win, 'wysiwyg'))
+  commandManager.add(COMMANDS.VIEW_LAYOUT_SOURCE, win => setDocumentLayout(win, 'source'))
+  commandManager.add(COMMANDS.VIEW_LAYOUT_PREVIEW, win => setDocumentLayout(win, 'preview'))
   commandManager.add(COMMANDS.VIEW_TOGGLE_SIDEBAR, toggleSidebar)
   commandManager.add(COMMANDS.VIEW_TOGGLE_TABBAR, toggleTabBar)
   commandManager.add(COMMANDS.VIEW_TOGGLE_TOC, showTableOfContents)

@@ -14,7 +14,6 @@ import {
 import log from 'electron-log'
 import { isDirectory, isFile, exists } from 'common/filesystem'
 import {
-  MARKDOWN_EXTENSIONS,
   isDangerousExecutableFile,
   isMarkdownFile
 } from 'common/filesystem/paths'
@@ -803,23 +802,8 @@ export const printDocument = (win: Win): void => {
   }
 }
 
-export const openFile = async(win: BrowserWindow | null): Promise<void> => {
-  if (!win) {
-    return
-  }
-  const { filePaths } = await dialog.showOpenDialog(win, {
-    properties: ['openFile', 'multiSelections'],
-    filters: [
-      {
-        name: 'Markdown document',
-        extensions: [...MARKDOWN_EXTENSIONS]
-      }
-    ]
-  })
-
-  if (Array.isArray(filePaths) && filePaths.length > 0) {
-    ipcMain.emit('app-open-files-by-id', win.id, filePaths)
-  }
+export const openFile = (win: BrowserWindow | null): void => {
+  if (win) ipcMain.emit('app-show-open-file-dialog', win.id)
 }
 
 const folderDialogs = new Set<number>()
@@ -845,17 +829,8 @@ export const addFolder = async(win: Win): Promise<void> => {
   }
 }
 
-export const openFolder = async(win: BrowserWindow | null): Promise<void> => {
-  if (!win) {
-    return
-  }
-  const { filePaths } = await dialog.showOpenDialog(win, {
-    properties: ['openDirectory', 'createDirectory']
-  })
-
-  if (filePaths && filePaths[0]) {
-    openFileOrFolder(win, filePaths[0])
-  }
+export const openFolder = (win: BrowserWindow | null): void => {
+  if (win) ipcMain.emit('app-show-open-folder-dialog', win.id)
 }
 
 export const openFileOrFolder = (

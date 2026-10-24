@@ -1084,6 +1084,14 @@
       "preview": "{name}，預覽分頁"
     }
   },
+  "documentLayout": {
+    "title": "文件版面配置",
+    "wysiwyg": "視覺化編輯器 (WYSIWYG)",
+    "source": "Markdown 原始碼",
+    "preview": "僅預覽",
+    "openEditor": "在視覺化編輯器中開啟",
+    "unavailable": "僅預覽版面配置下無法使用"
+  },
   "readingMode": {
     "title": "閱讀模式",
     "edit": "編輯模式",

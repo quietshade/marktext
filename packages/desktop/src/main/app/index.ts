@@ -5,7 +5,7 @@ import dayjs from 'dayjs'
 import log from 'electron-log'
 import { app, BrowserWindow, clipboard, dialog, nativeTheme, ipcMain } from 'electron'
 import type { BrowserWindowConstructorOptions } from 'electron'
-import { isChildOfDirectory } from 'common/filesystem/paths'
+import { isChildOfDirectory, MARKDOWN_EXTENSIONS } from 'common/filesystem/paths'
 import type { IUserPreferences } from '@shared/types/preferences'
 import { isLinux, isOsx, isWindows } from '../config'
 import parseArgs, { userArguments } from '../cli/parser'
@@ -14,6 +14,8 @@ import { normalizeCliMarkdownPath, normalizeMarkdownPath } from '../filesystem/m
 import { confirmAndTrashItem } from '../filesystem/trash'
 import { registerKeyboardListeners } from '../keyboard'
 import { selectTheme } from '../menu/actions/theme'
+import { openFileOrFolder } from '../menu/actions/file'
+import { getFileOpenDirectory, getFolderOpenDirectory } from '../menu/fileOpenDirectory'
 import { dockMenu } from '../menu/templates'
 import registerSpellcheckerListeners from '../spellchecker'
 import { watchers } from '../utils/imagePathAutoComplement'
@@ -623,6 +625,32 @@ class App {
 
     onInternalChannel('app-create-settings-window', (category?: string) => {
       this._openSettingsWindow(category)
+    })
+
+    onInternalChannel('app-show-open-folder-dialog', async(windowId: number) => {
+      const win = BrowserWindow.fromId(windowId)
+      if (!win) return
+      const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+        defaultPath: getFolderOpenDirectory(this._accessor.preferences.getAll()),
+        properties: ['openDirectory', 'createDirectory']
+      })
+      if (!canceled && !win.isDestroyed() && filePaths?.[0]) {
+        openFileOrFolder(win, filePaths[0])
+      }
+    })
+
+    onInternalChannel('app-show-open-file-dialog', async(windowId: number) => {
+      const win = BrowserWindow.fromId(windowId)
+      if (!win) return
+      const { menu, preferences } = this._accessor
+      const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+        defaultPath: getFileOpenDirectory(menu.getRecentDocuments(), preferences.getAll()),
+        properties: ['openFile', 'multiSelections'],
+        filters: [{ name: 'Markdown document', extensions: [...MARKDOWN_EXTENSIONS] }]
+      })
+      if (!canceled && !win.isDestroyed() && filePaths?.length) {
+        ipcMain.emit('app-open-files-by-id', win.id, filePaths)
+      }
     })
 
     onInternalChannel(

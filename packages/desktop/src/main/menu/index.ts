@@ -1,4 +1,5 @@
 import { applyReadingMenu } from './readingMode'
+import { isAvailableDocumentLayout, type AvailableDocumentLayout } from '@shared/types/documentLayout'
 import path from 'path'
 import { app, Menu, ipcMain, BrowserWindow } from 'electron'
 import log from 'electron-log'
@@ -42,6 +43,7 @@ interface ThemeMenuChange {
 class AppMenu {
   private _documentModes = new Map<number, boolean>()
   private _documentPresence = new Map<number, boolean>()
+  private _documentLayouts = new Map<number, AvailableDocumentLayout>()
 
   private _applyDocumentMode(windowId: number, update?: (menu: Menu) => void): void {
     const menu = this.windowMenus.get(windowId)?.menu
@@ -50,14 +52,27 @@ class AppMenu {
     applyReadingMenu(menu, false)
     if (update) update(menu)
     const sourceMode = !!menu.getMenuItemById('sourceCodeModeMenuItem')?.checked
+    const layout = this._documentLayouts.get(windowId) ?? (sourceMode ? 'source' : 'wysiwyg')
+    for (const value of ['wysiwyg', 'source', 'preview']) {
+      const item = menu.getMenuItemById(`documentLayout-${value}`)
+      if (item) {
+        // Electron radio setters select the item even when assigned false.
+        // Selecting only the active item also clears the rest of its group.
+        if (layout === value) item.checked = true
+        item.enabled = this._documentPresence.get(windowId) ?? true
+      }
+    }
+    const sourceItem = menu.getMenuItemById('sourceCodeModeMenuItem')
+    if (sourceItem) sourceItem.checked = layout === 'source'
     for (const id of ['focusModeMenuItem', 'typewriterModeMenuItem']) {
       const item = menu.getMenuItemById(id)
-      if (item) item.enabled = !sourceMode
+      if (item) item.enabled = layout === 'wysiwyg'
     }
     applyReadingMenu(
       menu,
       this._documentModes.get(windowId) ?? false,
-      this._documentPresence.get(windowId) ?? true
+      this._documentPresence.get(windowId) ?? true,
+      layout === 'preview'
     )
   }
 
@@ -162,6 +177,7 @@ class AppMenu {
 
   removeWindowMenu(windowId: number): void {
     this._documentModes.delete(windowId)
+    this._documentLayouts.delete(windowId)
     this._documentPresence.delete(windowId)
     // NOTE: Shortcut handler is automatically unregistered when window is closed.
     const { activeWindowId } = this
@@ -397,11 +413,12 @@ class AppMenu {
   }
 
   _listenForIpcMain(): void {
-    ipcMain.on('mt::update-document-mode', (event, readOnly: boolean, hasDocument = true) => {
+    ipcMain.on('mt::update-document-mode', (event, readOnly: boolean, hasDocument = true, layout?: unknown) => {
       const win = BrowserWindow.fromWebContents(event.sender)
       if (!win) return
       this._documentModes.set(win.id, readOnly)
       this._documentPresence.set(win.id, hasDocument)
+      if (isAvailableDocumentLayout(layout)) this._documentLayouts.set(win.id, layout)
       this._applyDocumentMode(win.id)
     })
     ipcMain.on('mt::add-recently-used-document', (_e, pathname: string) => {

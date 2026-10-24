@@ -129,6 +129,56 @@ describe('sidebar preview tabs', () => {
     expect(store.currentFile?.isPreview).toBe(false)
   })
 
+  it('retains a pending permanent open after a later preview completes', () => {
+    const store = useEditorStore()
+    const firstRequest = beginOpen(store, '/notes/pinned.md')
+    store.FOCUS_FILE('/notes/pinned.md')
+    expect(window.electron.ipcRenderer.send).toHaveBeenCalledWith('mt::promote-pending-preview', firstRequest)
+    const secondRequest = beginOpen(store, '/notes/next.md')
+    store.NEW_TAB_WITH_CONTENT({
+      markdownDocument: documentFor('next'), options: { preview: true, requestId: secondRequest }
+    })
+    store.NEW_TAB_WITH_CONTENT({
+      markdownDocument: documentFor('pinned'), options: { preview: true, requestId: firstRequest }
+    })
+    expect(store.tabs).toHaveLength(2)
+    expect(store.tabs.find(tab => tab.pathname === '/notes/pinned.md')?.isPreview).toBe(false)
+    expect(store.tabs.find(tab => tab.pathname === '/notes/next.md')?.isPreview).toBe(true)
+  })
+
+  it('layout and permission changes do not pin a temporary tab', async() => {
+    const store = useEditorStore()
+    const requestId = beginOpen(store, '/notes/layout.md')
+    store.NEW_TAB_WITH_CONTENT({
+      markdownDocument: documentFor('layout'), options: { preview: true, requestId }
+    })
+    const tab = currentFile(store)
+    for (const layout of ['source', 'preview', 'wysiwyg'] as const) {
+      await store.SET_DOCUMENT_LAYOUT(layout)
+      await store.SET_READ_ONLY(tab.id, true)
+      expect(tab.isPreview).toBe(true)
+      expect(tab.documentLayout).toBe(layout)
+    }
+    store.FOCUS_FILE('/notes/layout.md')
+    expect(tab.isPreview).toBe(false)
+    expect(tab.readOnly).toBe(true)
+    expect(tab.documentLayout).toBe('wysiwyg')
+  })
+
+  it('explicit File Open pins an existing preview and refreshes recents without resetting state', () => {
+    const store = useEditorStore()
+    const requestId = beginOpen(store, '/notes/reopen.md')
+    store.NEW_TAB_WITH_CONTENT({
+      markdownDocument: documentFor('reopen'), options: { preview: true, requestId, readOnly: true }
+    })
+    const tab = currentFile(store)
+    store.SET_DOCUMENT_LAYOUT('preview')
+    store.SWITCH_TAB_BY_FILEPATH('/notes/reopen.md')
+    expect(store.tabs).toEqual([tab])
+    expect(tab).toMatchObject({ isPreview: false, readOnly: true, documentLayout: 'preview', isSaved: true })
+    expect(window.electron.ipcRenderer.send).toHaveBeenCalledWith('mt::add-recently-used-document', '/notes/reopen.md')
+  })
+
   it('drops a response that is no longer the latest sidebar request', () => {
     const store = useEditorStore()
     const firstRequest = beginOpen(store, '/notes/a.md')

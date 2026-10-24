@@ -4,6 +4,8 @@
 // commits. Until then, these are intentionally open structures — better an
 // imperfect surface than a placeholder that's wrong.
 
+import type { DocumentLayout } from './documentLayout'
+
 export type LineEnding = 'lf' | 'crlf'
 
 export interface SerializedStat {
@@ -63,6 +65,9 @@ export interface FileSearchMatches {
 /** Canonical per-tab state shared by renderer stores, buffered persistence and IPC. */
 export interface IFileState {
   readOnly: boolean
+  documentLayout?: DocumentLayout
+  // Source and rendered scroll coordinates are not interchangeable.
+  sourceScrollTop?: number
   // Transient navigation state; deliberately excluded from buffered tab state.
   isPreview: boolean
   modeChanging?: boolean

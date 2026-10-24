@@ -1,4 +1,5 @@
 import type { ProjectRootsSnapshot, ProjectTreeEvent } from './project'
+import type { AvailableDocumentLayout } from './documentLayout'
 /**
  * Cross-process IPC contract: invoke returns a Promise, send is fire-and-forget,
  * sync returns directly, and main events push payloads to renderer listeners.
@@ -104,12 +105,14 @@ export interface IpcSendChannels {
   'mt::cmd-add-folder': []
   'mt::project-renderer-ready': []
   'mt::forget-document': [tabId: string]
-  'mt::update-document-mode': [readOnly: boolean, hasDocument?: boolean]
+  'mt::update-document-mode': [readOnly: boolean, hasDocument?: boolean, layout?: AvailableDocumentLayout]
   'app-create-editor-window': [config?: unknown]
   'app-create-settings-window': []
   'app-open-directory-by-id': [windowId: number, dirPath: string]
   'app-open-file-by-id': [windowId: number, filePath: string, options?: unknown]
   'app-open-files-by-id': [windowId: number, filePaths: string[], options?: unknown]
+  'app-show-open-file-dialog': [windowId: number]
+  'app-show-open-folder-dialog': [windowId: number]
   'app-open-markdown-by-id': [windowId: number, markdown: string, options?: unknown]
   'broadcast-preferences-changed': [partial: unknown]
   'broadcast-user-data-changed': [partial: unknown]
@@ -126,6 +129,7 @@ export interface IpcSendChannels {
   'mt::ask-for-user-preference': []
   'mt::check-for-update': []
   'mt::cancel-pending-preview': [requestId: number]
+  'mt::promote-pending-preview': [requestId: number]
   'mt::close-window': []
   'mt::close-window-confirm': [unsavedFiles: UnsavedFile[]]
   'mt::cmd-close-window': []
@@ -297,6 +301,7 @@ export interface IpcMainEventChannels {
   'mt::tabs-cycle-right': []
   'mt::toggle-view-layout-entry': [entry: string]
   'mt::toggle-view-mode-entry': [entry: string]
+  'mt::set-document-layout': [layout: AvailableDocumentLayout]
   'mt::update-file': [payload: { type: 'add' | 'change' | 'unlink'; change: FileChangeDetail }]
   'mt::update-object-tree': [payload: ProjectTreeEvent]
   'mt::user-preference': [partial: unknown]

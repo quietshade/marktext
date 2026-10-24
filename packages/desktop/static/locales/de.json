@@ -1084,6 +1084,14 @@
       "preview": "{name}, Vorschauregister"
     }
   },
+  "documentLayout": {
+    "title": "Dokumentlayout",
+    "wysiwyg": "Visueller Editor (WYSIWYG)",
+    "source": "Markdown-Quelltext",
+    "preview": "Nur Vorschau",
+    "openEditor": "Im visuellen Editor öffnen",
+    "unavailable": "In der Vorschau nicht verfügbar"
+  },
   "readingMode": {
     "title": "Lesemodus",
     "edit": "Bearbeitungsmodus",

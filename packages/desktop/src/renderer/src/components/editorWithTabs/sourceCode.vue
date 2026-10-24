@@ -12,7 +12,7 @@ import {
   captureSourceHistory,
   restoreSourceHistory
 } from '../../services/documentMode'
-import { ref, shallowRef, markRaw, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { computed, ref, shallowRef, markRaw, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useEditorStore } from '@/store/editor'
 import { usePreferencesStore } from '@/store/preferences'
 import {
@@ -57,7 +57,6 @@ let sourceSearch: SourceSearch | null = null
 
 const {
   theme,
-  sourceCode,
   sourceCodeLineNumbers,
   texMathDollars,
   texMathGfm,
@@ -65,11 +64,12 @@ const {
   texMathDoubleBackslash
 } = storeToRefs(preferencesStore)
 const { currentFile: currentTab } = storeToRefs(editorStore)
+const sourceCode = computed(() => editorStore.isSourceLayout)
 
-const isLocked = () => !!(currentTab.value?.readOnly || currentTab.value?.modeChanging)
+const isLocked = () => !!editorStore.documentEditingBlocked
 
 watch(
-  () => [currentTab.value?.readOnly, currentTab.value?.modeChanging],
+  () => [currentTab.value?.readOnly, currentTab.value?.modeChanging, currentTab.value?.documentLayout],
   () => editor.value?.setOption('readOnly', isLocked()),
   { flush: 'sync' }
 )
@@ -163,6 +163,11 @@ const handleFileChange = (payload: unknown) => {
   const { id, markdown: newMarkdown, muyaIndexCursor, reason } = payload as FileChangePayloadLike
   if (reason === 'source-handoff') return
   if (!editor.value) return
+
+  if (!editorStore.isSourceLayout) {
+    prepareTabSwitch()
+    return
+  }
 
   // On same-tab reload (external file change), preserve scroll across
   // setValue. Snapshot every plausible scroll element (the outer
@@ -393,6 +398,8 @@ const setActiveHeadingAtLine = (line: number): void => {
 const updateActiveHeadingFromScroll = (): void => {
   const container = sourceCodeContainer.value
   if (!container || !editor.value) return
+  const tab = editorStore.tabs.find(tab => tab.id === tabId.value)
+  if (tab) tab.sourceScrollTop = container.scrollTop
   const top = container.getBoundingClientRect().top + 80
   const line = editor.value.lineAtHeight(top, 'window')
   setActiveHeadingAtLine(line)
@@ -530,6 +537,10 @@ onMounted(() => {
 
   listenChange(codeMirrorInstance)
   registerSourceView(value => codeMirrorInstance.setOption('readOnly', value))
+  if (currentTab.value.sourceScrollTop) {
+    const top = currentTab.value.sourceScrollTop
+    nextTick(() => { if (container) container.scrollTop = top })
+  }
 })
 
 onBeforeUnmount(() => {
@@ -563,7 +574,7 @@ onBeforeUnmount(() => {
   bus.off('pasteAsPlainText', pasteSource)
   sourceSearch?.clear()
 
-  if (editor.value) {
+  if (editor.value && tabId.value === currentTab.value?.id) {
     const { cursor, markdown: newMarkdown } = getMarkdownAndCursor(editor.value)
     bus.emit('file-changed', {
       reason: 'source-handoff',

@@ -1084,6 +1084,14 @@
       "preview": "{name}, önizleme sekmesi"
     }
   },
+  "documentLayout": {
+    "title": "Belge düzeni",
+    "wysiwyg": "Görsel düzenleyici (WYSIWYG)",
+    "source": "Markdown kaynağı",
+    "preview": "Yalnızca önizleme",
+    "openEditor": "Görsel düzenleyicide aç",
+    "unavailable": "Önizlemede kullanılamaz"
+  },
   "readingMode": {
     "title": "Okuma Modu",
     "edit": "Düzenleme Modu",

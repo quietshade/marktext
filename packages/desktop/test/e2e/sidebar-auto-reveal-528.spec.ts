@@ -38,13 +38,13 @@ const createFixture = (): Fixture => {
 }
 
 const treeRow = (page: Page, filePath: string) =>
-  page.locator(`.tree-wrapper .side-bar-file[title="${filePath}"]`)
+  page.locator('.tree-wrapper .side-bar-file').and(page.getByTitle(filePath, { exact: true }))
 
 const folderHeader = (page: Page, folderPath: string) =>
-  page.locator(`.tree-wrapper .folder-name[title="${folderPath}"]`)
+  page.locator('.tree-wrapper .folder-name').and(page.getByTitle(folderPath, { exact: true }))
 
 const tab = (page: Page, filePath: string) =>
-  page.locator(`.editor-tabs .tabs-container li[title="${filePath}"]`)
+  page.locator('.editor-tabs .tabs-container li').and(page.getByTitle(filePath, { exact: true }))
 
 const sideBarWidth = (page: Page): Promise<number> =>
   page.evaluate(() => {
@@ -62,10 +62,7 @@ const scrollTreeTo = async(page: Page, top: number): Promise<void> => {
 }
 
 const isFolderCollapsed = (page: Page, folderPath: string): Promise<boolean> =>
-  page.evaluate((selector) => {
-    const arrow = document.querySelector(`${selector} .icon-arrow`)
-    return !!arrow && arrow.classList.contains('fold')
-  }, `.tree-wrapper .folder-name[title="${folderPath}"]`)
+  folderHeader(page, folderPath).locator('.icon-arrow').evaluate(arrow => arrow.classList.contains('fold'))
 
 const setFolderExpanded = async(
   page: Page,
@@ -77,14 +74,13 @@ const setFolderExpanded = async(
 }
 
 const isRowVisible = (page: Page, filePath: string): Promise<boolean> =>
-  page.evaluate((selector) => {
-    const row = document.querySelector(selector)
+  treeRow(page, filePath).evaluate(row => {
     const container = document.querySelector('.tree-wrapper')
-    if (!row || !container) return false
+    if (!container) return false
     const rowRect = row.getBoundingClientRect()
     const containerRect = container.getBoundingClientRect()
     return rowRect.top >= containerRect.top - 1 && rowRect.bottom <= containerRect.bottom + 1
-  }, `.tree-wrapper .side-bar-file[title="${filePath}"]`)
+  })
 
 const openProject = async(app: ElectronApplication, page: Page, root: string): Promise<void> => {
   await page.waitForSelector('.side-bar', { timeout: 15000 })
@@ -133,7 +129,7 @@ test.describe('#528 reveal active file in the side bar', () => {
 
   test.beforeAll(async() => {
     const launched = await launchElectron(undefined, {
-      preferences: { openFilesInPreviewMode: false, sideBarVisibility: true, restoreLayoutState: true }
+      preferences: { openFilesInPreviewMode: false, sideBarVisibility: true, restoreLayoutState: true, tabBarVisibility: true }
     })
     app = launched.app
     page = launched.page
@@ -192,6 +188,7 @@ test.describe('#528 reveal with autoRevealInSidebar turned off', () => {
       preferences: {
         sideBarVisibility: true,
         restoreLayoutState: true,
+        tabBarVisibility: true,
         autoRevealInSidebar: false,
         openFilesInPreviewMode: false
       }

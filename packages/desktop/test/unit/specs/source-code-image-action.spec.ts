@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { parse, compileScript } from 'vue/compiler-sfc'
 import ts from 'typescript'
-import { ref, shallowRef } from 'vue'
+import { computed, ref, shallowRef } from 'vue'
 import {
   findMarkdownHeadingLine,
   getMarkdownHeadingLines,
@@ -65,7 +65,7 @@ const loadComponent = (deps: Record<string, unknown>) => {
     '__deps',
     'exports',
     'module',
-    `const { _defineComponent, ref, shallowRef, watch, onMounted, onBeforeUnmount, nextTick,
+    `const { _defineComponent, computed, ref, shallowRef, watch, onMounted, onBeforeUnmount, nextTick,
       useEditorStore, usePreferencesStore, storeToRefs, codeMirror,
       setCursorAtFirstLine, setTextDirection, getWordCount, adjustCursor, bus,
       oneDarkThemes, railscastsThemes, findMarkdownHeadingLine, getMarkdownHeadingLines, scrollSourceEditorToLine,
@@ -87,12 +87,13 @@ const makeDeps = (over: Record<string, unknown> = {}) => ({
   captureSourceHistory: () => {},
   restoreSourceHistory: () => {},
   ref,
+  computed,
   shallowRef,
   watch: () => {},
   onMounted: () => {},
   onBeforeUnmount: () => {},
   nextTick: () => Promise.resolve(),
-  useEditorStore: () => ({ LISTEN_FOR_CONTENT_CHANGE: () => {} }),
+  useEditorStore: () => ({ LISTEN_FOR_CONTENT_CHANGE: () => {}, isSourceLayout: true }),
   usePreferencesStore: () => ({}),
   storeToRefs: () => ({ theme: ref(''), sourceCode: ref(true), currentFile: ref(null) }),
   codeMirror: () => ({}),

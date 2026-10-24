@@ -246,7 +246,7 @@ export const usePreferencesStore = defineStore('preferences', {
     // Edit modes of the current window (not part of persistent settings)
     typewriter: false, // typewriter mode
     focus: false,
-    sourceCode: false, // source code mode
+    sourceCode: false, // Startup fallback; active per-tab layout lives in the editor store.
 
     imageFolderPath: '',
     webImages: [],
@@ -284,9 +284,14 @@ export const usePreferencesStore = defineStore('preferences', {
     },
 
     TOGGLE_VIEW_MODE(entryName: keyof PreferencesState | string): void {
+      if (entryName === 'sourceCode') {
+        const editor = useEditorStore()
+        editor.SET_DOCUMENT_LAYOUT(editor.isSourceLayout ? 'wysiwyg' : 'source')
+        return
+      }
       if (
         useEditorStore().currentFile?.modeChanging ||
-        (useEditorStore().currentFile?.readOnly && ['typewriter', 'focus'].includes(entryName))
+        (useEditorStore().documentReadOnly && ['typewriter', 'focus'].includes(entryName))
       )
         return
       const target = this as unknown as Record<string, unknown>
@@ -331,7 +336,7 @@ export const usePreferencesStore = defineStore('preferences', {
       window.electron.ipcRenderer.on('mt::toggle-view-mode-entry', (_event, entryName) => {
         this.TOGGLE_VIEW_MODE(entryName)
         const target = this as unknown as Record<string, unknown>
-        this.DISPATCH_EDITOR_VIEW_STATE({ [entryName]: target[entryName] })
+        this.DISPATCH_EDITOR_VIEW_STATE({ [entryName]: entryName === 'sourceCode' ? useEditorStore().isSourceLayout : target[entryName] })
       })
     },
 
@@ -341,7 +346,7 @@ export const usePreferencesStore = defineStore('preferences', {
         const name = entryName as string
         this.TOGGLE_VIEW_MODE(name)
         const target = this as unknown as Record<string, unknown>
-        this.DISPATCH_EDITOR_VIEW_STATE({ [name]: target[name] })
+        this.DISPATCH_EDITOR_VIEW_STATE({ [name]: name === 'sourceCode' ? useEditorStore().isSourceLayout : target[name] })
       })
     },
 

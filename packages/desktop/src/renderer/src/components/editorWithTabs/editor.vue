@@ -2,7 +2,7 @@
   <div
     class="editor-wrapper"
     :class="[
-      { typewriter: typewriter, focus: focus, source: sourceCode, 'viewer-open': viewerOpen }
+      { typewriter: typewriter, focus: focus, source: sourceCode, preview: editorStore.isPreviewLayout, 'viewer-open': viewerOpen }
     ]"
     :dir="textDirection"
   >
@@ -122,6 +122,7 @@ import { SpellChecker } from '@/spellchecker'
 import { isMac, animatedScrollTo } from '@/util'
 import { moveImageToFolder, uploadImage } from '@/util/fileSystem'
 import { guessClipboardFilePath } from '@/util/clipboard'
+import { installPreviewClipboard } from '@/util/previewClipboard'
 import { dataURLToFile } from '@/util/dataURLToFile'
 import { getCssForOptions, getHtmlToc, type PdfCssOptions, type HtmlTocOptions } from '@/util/pdf'
 import {
@@ -237,17 +238,19 @@ const {
   language,
 
   typewriter: typewriterPreference,
-  focus: focusPreference,
-  sourceCode: sourceCodePreference
+  focus: focusPreference
 } = storeToRefs(preferencesStore)
 
 const { currentFile, tabs } = storeToRefs(editorStore)
-const sourceCode = sourceCodePreference
-const typewriter = computed(() => typewriterPreference.value && !currentFile.value?.readOnly)
-const focus = computed(() => focusPreference.value && !currentFile.value?.readOnly)
+const sourceCode = computed(() => editorStore.isSourceLayout)
+const documentReadOnly = computed(() => editorStore.documentReadOnly)
+let previewClipboard: ReturnType<typeof installPreviewClipboard> | undefined
+const typewriter = computed(() => typewriterPreference.value && !documentReadOnly.value)
+const focus = computed(() => focusPreference.value && !documentReadOnly.value)
 let loadingContent = false
+let loadedTabId = currentFile.value?.id
 const readingSelectionChanged = () => {
-  if (!currentFile.value?.readOnly || !editor.value) return
+  if (!documentReadOnly.value || !editor.value) return
   const selection = document.getSelection()
   if (selection?.anchorNode && editor.value.domNode.contains(selection.anchorNode)) {
     setSelectionWordCountFromText(selection.toString())
@@ -748,7 +751,7 @@ watch(currentFile, (value, oldValue) => {
 watch(
   sourceCode,
   (value, oldValue) => {
-    if (value && value !== oldValue) {
+    if (value && value !== oldValue && loadedTabId === currentFile.value?.id) {
       if (editor.value?.isReadOnly) return
       // The viewer holds a rendering of a document that is about to stop being
       // shown, and holds the editor behind it inert while it is up.
@@ -778,7 +781,7 @@ watch(
 )
 
 watch(
-  () => currentFile.value?.readOnly,
+  () => documentReadOnly.value,
   (value) => {
     editor.value?.setReadOnly(!!value)
   },
@@ -1006,7 +1009,7 @@ const openSpellcheckerLanguageCommand = () => {
 }
 
 const replaceMisspelling = (payload: unknown) => {
-  if (sourceCode.value || currentFile.value?.readOnly || currentFile.value?.modeChanging) return
+  if (sourceCode.value || documentReadOnly.value || currentFile.value?.modeChanging) return
   const { word, replacement } = payload as { word: string; replacement: string }
   if (editor.value) {
     editor.value.replaceCurrentWordInlineUnsafe(word, replacement)
@@ -1014,7 +1017,7 @@ const replaceMisspelling = (payload: unknown) => {
 }
 
 const handleUndo = () => {
-  if (sourceCode.value || currentFile.value?.readOnly || currentFile.value?.modeChanging) {
+  if (sourceCode.value || documentReadOnly.value || currentFile.value?.modeChanging) {
     return
   }
 
@@ -1024,7 +1027,7 @@ const handleUndo = () => {
 }
 
 const handleRedo = () => {
-  if (sourceCode.value || currentFile.value?.readOnly || currentFile.value?.modeChanging) {
+  if (sourceCode.value || documentReadOnly.value || currentFile.value?.modeChanging) {
     return
   }
 
@@ -1060,8 +1063,12 @@ const COPY_PASTE_METHOD_MAP: Record<string, 'copyAsRich' | 'copyAsHtml' | 'paste
 }
 const handleCopyPaste = (type: unknown) => {
   if (sourceCode.value) return
-  if (type === 'pasteAsPlainText' && (currentFile.value?.readOnly || currentFile.value?.modeChanging)) return
+  if (type === 'pasteAsPlainText' && (documentReadOnly.value || currentFile.value?.modeChanging)) return
   if (editor.value) {
+    if (editorStore.isPreviewLayout && type === 'copyAsHtml') {
+      previewClipboard?.copyHtml()
+      return
+    }
     const method = COPY_PASTE_METHOD_MAP[type as string]
     if (method) editor.value[method]()
   }
@@ -1098,7 +1105,7 @@ const handleSearch = (payload: unknown) => {
 }
 
 const handReplace = (payload: unknown) => {
-  if (!editor.value || sourceCode.value || currentFile.value?.readOnly || currentFile.value?.modeChanging) return
+  if (!editor.value || sourceCode.value || documentReadOnly.value || currentFile.value?.modeChanging) return
   const { value, opt } = payload as { value: string; opt?: IReplaceOption }
   editorStore.SEARCH(toSearchMatches(editor.value.replace(value, opt)))
 }
@@ -1377,7 +1384,7 @@ const pushSelectionMenuState = (changes: MuyaChange) => {
 }
 
 const handleEditParagraph = (type: unknown) => {
-  if (sourceCode.value || currentFile.value?.readOnly || currentFile.value?.modeChanging) {
+  if (sourceCode.value || documentReadOnly.value || currentFile.value?.modeChanging) {
     return
   }
   if (type === 'table') {
@@ -1399,7 +1406,7 @@ const handleEditParagraph = (type: unknown) => {
 }
 
 const handleParagraph = (type: unknown) => {
-  if (sourceCode.value || currentFile.value?.readOnly || currentFile.value?.modeChanging) {
+  if (sourceCode.value || documentReadOnly.value || currentFile.value?.modeChanging) {
     return
   }
   if (editor.value) {
@@ -1420,7 +1427,7 @@ const handleParagraph = (type: unknown) => {
 }
 
 const handleInlineFormat = (type: unknown) => {
-  if (sourceCode.value || currentFile.value?.readOnly || currentFile.value?.modeChanging) {
+  if (sourceCode.value || documentReadOnly.value || currentFile.value?.modeChanging) {
     return
   }
   editor.value && editor.value.format(type as string)
@@ -1428,7 +1435,7 @@ const handleInlineFormat = (type: unknown) => {
 
 const handleDialogTableConfirm = () => {
   dialogTableVisible.value = false
-  if (sourceCode.value || currentFile.value?.readOnly || currentFile.value?.modeChanging) return
+  if (sourceCode.value || documentReadOnly.value || currentFile.value?.modeChanging) return
   editor.value && editor.value.createTable(tableChecker)
 }
 
@@ -1441,6 +1448,7 @@ interface FileLoadedPayload {
 const setMarkdownToEditor = (payload: unknown) => {
   const { id, markdown: newMarkdown, cursor: newCursor } = (payload ?? {}) as FileLoadedPayload
   if (editor.value) {
+    loadedTabId = id
     // `setContent` resets the document and clears the undo history; only set a
     // cursor afterwards (a freshly-opened file has no history to restore).
     editor.value.setContent(newMarkdown ?? '')
@@ -1494,6 +1502,7 @@ const handleFileChange = (payload: unknown) => {
   if (!container) return
 
   if (typeof newMarkdown === 'string') {
+    loadedTabId = id
     // Returning from source-code mode: the WYSIWYG engine is never unmounted
     // while source mode is up (index.vue overlays it via `v-if`), so it still
     // holds the PRE-source-mode document and undo history. Record the bulk
@@ -1641,7 +1650,7 @@ const handleModalOpening = () => {
 
 // Chromium no longer fires programmatic paste; insert the saved screenshot via imageAction.
 const handleScreenShot = (filePath?: unknown) => {
-  if (sourceCode.value || currentFile.value?.readOnly || currentFile.value?.modeChanging) return
+  if (sourceCode.value || documentReadOnly.value || currentFile.value?.modeChanging) return
   if (editor.value && typeof filePath === 'string' && filePath) {
     editor.value.pasteImage(filePath)
   }
@@ -1704,7 +1713,7 @@ onMounted(() => {
   const options: Partial<IMuyaOptions> = {
     focusMode: focus.value,
     markdown: props.markdown,
-    readOnly: !!currentFile.value?.readOnly,
+    readOnly: !!documentReadOnly.value,
     locale: getMuyaLocale(language.value),
     preferLooseListItem: preferLooseListItem.value,
     autoPairBracket: autoPairBracket.value,
@@ -1764,6 +1773,7 @@ onMounted(() => {
 
   // Keep the engine outside Vue proxies: DOM/block identity is required by rendering.
   const muya = markRaw(new Muya(ele, options))
+  previewClipboard = installPreviewClipboard(muya.domNode, () => editorStore.isPreviewLayout)
   muya.init({ focus: editorStore.TAKE_OPEN_INTENT(currentFile.value?.pathname) !== false })
   editor.value = muya
   muya.on(
@@ -1787,7 +1797,7 @@ onMounted(() => {
           {
             label: t('menu.edit.copyAsHtml'),
             enabled: hasSelection,
-            click: () => muya.copyAsHtml()
+            click: () => handleCopyPaste('copyAsHtml')
           },
           { label: t('menu.edit.selectAll'), click: () => muya.selectAll() },
           ...(href
@@ -1812,7 +1822,7 @@ onMounted(() => {
     }
   )
   document.addEventListener('selectionchange', readingSelectionChanged)
-  registerDocumentView((value) => muya.setReadOnly(value))
+  registerDocumentView((value) => muya.setReadOnly(value || editorStore.isPreviewLayout))
   // The first document's content is set via constructor options, so no
   // `file-loaded` / `setMarkdownToEditor` runs for it — seed its TOC here.
   editorStore.UPDATE_TOC(muya.getTOC())
@@ -1870,7 +1880,7 @@ onMounted(() => {
 
   // Engine json-change emits operations; the desktop pipeline consumes a derived document snapshot.
   editor.value.on('json-change', () => {
-    if (loadingContent || sourceCode.value || currentFile.value?.readOnly) return
+    if (loadingContent || sourceCode.value || documentReadOnly.value) return
     // Capture the tab ID before a later tab switch can redirect this update.
     if (!currentFile.value || !editor.value) return
     const { id } = currentFile.value
@@ -1914,7 +1924,7 @@ onMounted(() => {
     'format-click',
     ({ event, formatType, data }: { event: MouseEvent; formatType: string; data: unknown }) => {
       const ctrlOrMeta = (isMac && event.metaKey) || (!isMac && event.ctrlKey)
-      if (formatType === 'link' && (ctrlOrMeta || currentFile.value?.readOnly)) {
+      if (formatType === 'link' && (ctrlOrMeta || documentReadOnly.value)) {
         editorStore.FORMAT_LINK_CLICK({
           data: data as { href: string; [key: string]: unknown },
           dirname: window.DIRNAME
@@ -1954,7 +1964,7 @@ onMounted(() => {
 
   editor.value.on('selection-change', (changes: MuyaChange) => {
     const y = (changes.cursorCoords?.y ?? null) as number | null
-    if (y != null && !currentFile.value?.readOnly) {
+    if (y != null && !documentReadOnly.value) {
       // Before the scrolling below: a 0-duration `animatedScrollTo` assigns
       // `scrollTop` at once, moving the headings out from under `y`.
       updateActiveHeading(y)
@@ -1999,6 +2009,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  previewClipboard?.dispose()
   registerDocumentView(null)
   document.removeEventListener('selectionchange', readingSelectionChanged)
   bus.off('file-loaded', setMarkdownToEditor)
@@ -2112,6 +2123,15 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   cursor: default;
   overflow-anchor: none !important;
+}
+
+/* Preview has no source-marker caret positions. Removing their layout boxes
+   also keeps Chromium's native selection text free of Markdown syntax. */
+.editor-wrapper.preview .mu-remove,
+.editor-wrapper.preview .mu-hide:not(.mu-math, .mu-ruby, .mu-emoji-marked-text, .mu-html-escape),
+.editor-wrapper.preview .mu-math-text,
+.editor-wrapper.preview .mu-ruby-text {
+  display: none !important;
 }
 
 .editor-component .mu-container {

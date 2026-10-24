@@ -3,6 +3,15 @@
     v-if="currentFile"
     class="document-mode"
   >
+    <span class="document-layout-label">{{ t(`documentLayout.${documentLayout}`) }}</span>
+    <button
+      v-if="documentLayout === 'preview'"
+      type="button"
+      class="plain-button document-mode-toggle"
+      @click="editorStore.SET_DOCUMENT_LAYOUT('wysiwyg')"
+    >
+      {{ t('documentLayout.openEditor') }}
+    </button>
     <span
       role="status"
       aria-live="polite"
@@ -29,7 +38,7 @@ import { nextTick } from 'vue'
 
 const { t } = useI18n()
 const editorStore = useEditorStore()
-const { currentFile } = storeToRefs(editorStore)
+const { currentFile, documentLayout } = storeToRefs(editorStore)
 
 const toggleMode = async(event: MouseEvent) => {
   const file = currentFile.value
@@ -45,6 +54,7 @@ const toggleMode = async(event: MouseEvent) => {
 <style scoped>
 .document-mode {
   display: flex;
+  flex-wrap: wrap;
   flex-shrink: 0;
   align-items: center;
   justify-content: flex-end;

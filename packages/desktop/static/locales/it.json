@@ -1084,6 +1084,14 @@
       "preview": "{name}, scheda di anteprima"
     }
   },
+  "documentLayout": {
+    "title": "Layout del documento",
+    "wysiwyg": "Editor visuale (WYSIWYG)",
+    "source": "Sorgente Markdown",
+    "preview": "Solo anteprima",
+    "openEditor": "Apri nell’editor visuale",
+    "unavailable": "Non disponibile in anteprima"
+  },
   "readingMode": {
     "title": "Modalità lettura (sola lettura)",
     "edit": "Modalità modifica",

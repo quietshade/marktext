@@ -77,17 +77,19 @@ const timer = ref<ReturnType<typeof setTimeout> | null>(null)
 
 const { windowActive, platform, init } = storeToRefs(mainStore)
 const { showTabBar } = storeToRefs(layoutStore)
-const { sourceCode, theme, customCss, textDirection, zoom } = storeToRefs(preferencesStore)
+const { theme, customCss, textDirection, zoom } = storeToRefs(preferencesStore)
+const sourceCode = computed(() => editorStore.isSourceLayout)
 const { projectTree } = storeToRefs(projectStore)
 const { currentFile, selectionWordCount } = storeToRefs(editorStore)
 
 watch(
-  () => [currentFile.value?.id, currentFile.value?.readOnly],
+  () => [currentFile.value?.id, currentFile.value?.readOnly, editorStore.documentLayout],
   () => {
     window.electron.ipcRenderer.send(
       'mt::update-document-mode',
       !!currentFile.value?.readOnly,
-      !!currentFile.value
+      !!currentFile.value,
+      editorStore.documentLayout
     )
   },
   { immediate: true }

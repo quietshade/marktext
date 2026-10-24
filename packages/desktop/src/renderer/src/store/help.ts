@@ -66,6 +66,7 @@ export const getOptionsFromState = (
 
 const documentStateKeys = [
   'readOnly',
+  'documentLayout',
   'diskMissing',
   'diskConflict',
   'isPendingCreation',

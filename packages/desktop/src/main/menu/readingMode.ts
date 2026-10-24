@@ -36,7 +36,7 @@ const applyItem = (item: MenuItem, readOnly: boolean): void => {
   item.submenu?.items.forEach((child) => applyItem(child, readOnly))
 }
 
-export const applyReadingMenu = (menu: Menu, readOnly: boolean, hasDocument = true): void => {
+export const applyReadingMenu = (menu: Menu, readOnly: boolean, hasDocument = true, previewOnly = false): void => {
   const toggle = menu.getMenuItemById('readOnlyModeMenuItem')
   if (toggle) {
     toggle.checked = readOnly
@@ -44,6 +44,6 @@ export const applyReadingMenu = (menu: Menu, readOnly: boolean, hasDocument = tr
   }
   for (const id of blockedItems) {
     const item = menu.getMenuItemById(id)
-    if (item) applyItem(item, readOnly)
+    if (item) applyItem(item, readOnly || previewOnly)
   }
 }

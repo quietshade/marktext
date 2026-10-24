@@ -63,7 +63,8 @@ class EditorWindow extends BaseWindow {
   readonly projectRoots: ProjectRoots
   private _openedFiles: string[] | null
   private _latestPreviewRequestId: number | null
-  private _pendingPreviewPaths: Map<string, number>
+  private _pendingPreviewPaths: Map<string, { requestId: number; options: FileOpenOptions }>
+  private _previewRequestGeneration = 0
 
   public bufferStoreInfo: BufferStoreInfo | null
 
@@ -309,8 +310,8 @@ class EditorWindow extends BaseWindow {
   cancelPendingPreview(requestId: number): void {
     if (requestId !== this._latestPreviewRequestId) return
 
-    for (const [pathname, pendingId] of this._pendingPreviewPaths) {
-      if (pendingId === requestId) {
+    for (const [pathname, pending] of this._pendingPreviewPaths) {
+      if (pending.requestId === requestId && pending.options.preview) {
         this._pendingPreviewPaths.delete(pathname)
         break
       }
@@ -318,7 +319,14 @@ class EditorWindow extends BaseWindow {
     this._latestPreviewRequestId = null
   }
 
+  promotePendingPreview(requestId: number): void {
+    for (const pending of this._pendingPreviewPaths.values()) {
+      if (pending.requestId === requestId) pending.options.preview = false
+    }
+  }
+
   private _resetPreviewRequests(): void {
+    this._previewRequestGeneration++
     this._latestPreviewRequestId = null
     this._pendingPreviewPaths.clear()
   }
@@ -348,7 +356,7 @@ class EditorWindow extends BaseWindow {
       const isPreview = options.preview === true && typeof options.requestId === 'number'
       const previewRequestId = isPreview ? (options.requestId as number) : null
       if (previewRequestId !== null) {
-        const pendingRequestId = this._pendingPreviewPaths.get(filePath)
+        const pendingRequestId = this._pendingPreviewPaths.get(filePath)?.requestId
         if (pendingRequestId !== undefined) {
           if (previewRequestId <= pendingRequestId) continue
         } else {
@@ -360,7 +368,7 @@ class EditorWindow extends BaseWindow {
           }
         }
         this._latestPreviewRequestId = previewRequestId
-        this._pendingPreviewPaths.set(filePath, previewRequestId)
+        this._pendingPreviewPaths.set(filePath, { requestId: previewRequestId, options })
       }
 
       if (this._openedFiles!.includes(filePath)) {
@@ -374,6 +382,7 @@ class EditorWindow extends BaseWindow {
         continue
       }
       if (!isPreview) this._openedFiles!.push(filePath)
+      const previewRequestGeneration = this._previewRequestGeneration
       const load =
         options.allowMissing && !options.readOnly
           ? loadCliMarkdownFile.bind(null, filePath, preferences.getAll().defaultEncoding ?? 'utf8')
@@ -381,10 +390,11 @@ class EditorWindow extends BaseWindow {
       load(eol, autoGuessEncoding, trimTrailingNewline, autoNormalizeLineEndings)
         .then((rawDocument) => {
           if (previewRequestId !== null) {
-            const currentPendingRequestId = this._pendingPreviewPaths.get(filePath)
-            if (currentPendingRequestId !== previewRequestId) return
-            this._pendingPreviewPaths.delete(filePath)
-            if (previewRequestId !== this._latestPreviewRequestId) return
+            if (previewRequestGeneration !== this._previewRequestGeneration) return
+            const currentPendingRequestId = this._pendingPreviewPaths.get(filePath)?.requestId
+            if (currentPendingRequestId === previewRequestId) this._pendingPreviewPaths.delete(filePath)
+            // Promotion changes the open's ownership even if another preview has started.
+            if (options.preview && (currentPendingRequestId !== previewRequestId || previewRequestId !== this._latestPreviewRequestId)) return
           }
           if (this.lifecycle === WindowLifecycle.READY) {
             this._doOpenTab(rawDocument, options, selected)
@@ -393,8 +403,9 @@ class EditorWindow extends BaseWindow {
           }
         })
         .catch((err: Error) => {
+          if (previewRequestId !== null && previewRequestGeneration !== this._previewRequestGeneration) return
           if (previewRequestId !== null) {
-            if (this._pendingPreviewPaths.get(filePath) === previewRequestId) {
+            if (this._pendingPreviewPaths.get(filePath)?.requestId === previewRequestId) {
               this._pendingPreviewPaths.delete(filePath)
             }
           } else {
@@ -591,7 +602,7 @@ class EditorWindow extends BaseWindow {
       throw new Error('Invalid state.')
     }
     const { browserWindow, bufferStoreInfo, _accessor } = this
-    const { menu: appMenu, preferences } = _accessor
+    const { preferences } = _accessor
 
     try {
       const bufferState = JSON.parse(
@@ -611,6 +622,7 @@ class EditorWindow extends BaseWindow {
       const { autoGuessEncoding, trimTrailingNewline, autoNormalizeLineEndings } =
         preferences.getAll()
 
+      // Disk-read completion order must not reorder the saved recent-file history.
       const fileOpenRequests: Promise<void>[] = []
       for (const tab of bufferState.tabs) {
         tab.readOnly ??=
@@ -644,7 +656,6 @@ class EditorWindow extends BaseWindow {
 
               if (!this._openedFiles!.includes(tab.pathname)) {
                 this.addToOpenedFiles(tab.pathname)
-                appMenu.addRecentlyUsedDocument(tab.pathname)
               }
             })
             .catch((err: Error) => {
