@@ -15,7 +15,7 @@ import { usePreferencesStore } from '@/store/preferences'
 import { createDocumentState } from '@/store/help'
 import { registerDocumentView } from '@/services/documentMode'
 import bus from '@/bus'
-import { DOCUMENT_LAYOUTS, isAvailableDocumentLayout, resolveDocumentLayout } from '@shared/types/documentLayout'
+import { DOCUMENT_LAYOUTS, getDocumentCapabilities, isAvailableDocumentLayout, resolveDocumentLayout } from '@shared/types/documentLayout'
 
 beforeEach(() => {
   setActivePinia(createPinia())
@@ -37,6 +37,44 @@ const open = (readOnly = false) => {
 }
 
 describe('document layout and permission are independent', () => {
+  it.each(DOCUMENT_LAYOUTS.flatMap(documentLayout => [false, true].map(readOnly => ({ documentLayout, readOnly }))))(
+    'derives pane capabilities for $documentLayout with readOnly=$readOnly',
+    ({ documentLayout, readOnly }) => {
+      const source = documentLayout === 'source' || documentLayout === 'split'
+      const allowed = !readOnly && documentLayout !== 'preview'
+      expect(getDocumentCapabilities({ documentLayout, readOnly })).toEqual({
+        usesCodeMirror: source,
+        sourceEditable: source && allowed,
+        visualEditable: documentLayout === 'wysiwyg' && allowed,
+        hasRenderedPreview: documentLayout === 'split' || documentLayout === 'preview',
+        canMutateDocument: allowed
+      })
+      const changing = getDocumentCapabilities({ documentLayout, readOnly, modeChanging: true })
+      expect(changing.canMutateDocument).toBe(false)
+      expect(changing.sourceEditable).toBe(false)
+      expect(changing.visualEditable).toBe(false)
+    }
+  )
+
+  it('has no editable surface without a document', () => {
+    expect(getDocumentCapabilities(null).canMutateDocument).toBe(false)
+    expect(getDocumentCapabilities(null).visualEditable).toBe(false)
+  })
+
+  it('keeps active capabilities resolved and Source identity exact', () => {
+    const { store, tab } = open()
+    tab.documentLayout = 'split'
+    expect(store.isSourceLayout).toBe(false)
+    expect(store.usesSourceEditor).toBe(false)
+    expect(store.documentLayout).toBe('wysiwyg')
+    store.SET_DOCUMENT_LAYOUT('source')
+    expect(store.usesSourceEditor).toBe(true)
+    expect(store.documentCapabilities.sourceEditable).toBe(true)
+    tab.modeChanging = true
+    expect(store.documentCapabilities.canMutateDocument).toBe(false)
+    expect(store.documentCapabilities.sourceEditable).toBe(false)
+  })
+
   it('defines four identities but does not activate deferred Split or invalid layouts', () => {
     expect(DOCUMENT_LAYOUTS).toEqual(['wysiwyg', 'source', 'split', 'preview'])
     const { store } = open()

@@ -78,7 +78,7 @@ const timer = ref<ReturnType<typeof setTimeout> | null>(null)
 const { windowActive, platform, init } = storeToRefs(mainStore)
 const { showTabBar } = storeToRefs(layoutStore)
 const { theme, customCss, textDirection, zoom } = storeToRefs(preferencesStore)
-const sourceCode = computed(() => editorStore.isSourceLayout)
+const sourceCode = computed(() => editorStore.usesSourceEditor)
 const { projectTree } = storeToRefs(projectStore)
 const { currentFile, selectionWordCount } = storeToRefs(editorStore)
 

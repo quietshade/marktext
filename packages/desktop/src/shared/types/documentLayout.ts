@@ -12,3 +12,20 @@ export const resolveDocumentLayout = (value: unknown, sourceDefault = false): Av
 // A view capability; the persisted document permission remains readOnly.
 export const isDocumentReadOnly = (document: { readOnly?: boolean; documentLayout?: DocumentLayout } | null | undefined): boolean =>
   !!document?.readOnly || document?.documentLayout === 'preview'
+
+export const getDocumentCapabilities = (document: {
+  readOnly?: boolean
+  documentLayout?: DocumentLayout
+  modeChanging?: boolean
+} | null | undefined) => {
+  const layout = document?.documentLayout ?? 'wysiwyg'
+  const usesCodeMirror = layout === 'source' || layout === 'split'
+  const canMutateDocument = !!document && !isDocumentReadOnly(document) && !document.modeChanging
+  return {
+    usesCodeMirror,
+    sourceEditable: usesCodeMirror && canMutateDocument,
+    visualEditable: layout === 'wysiwyg' && canMutateDocument,
+    hasRenderedPreview: layout === 'split' || layout === 'preview',
+    canMutateDocument
+  }
+}

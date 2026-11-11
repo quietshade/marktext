@@ -177,7 +177,8 @@ test('unlocking default reading retains source view and the startup source prefe
     await expect.poll(() => page.locator('.CodeMirror').evaluate((host: HTMLElement & { CodeMirror: CodeMirror.Editor }) => host.CodeMirror.getOption('readOnly'))).toBe(true)
     await toggleReadingMode(page)
     await expect(page.locator('.CodeMirror')).toBeVisible()
-    await expect(page.locator('.mu-read-only')).toHaveCount(0)
+    await expect.poll(() => page.locator('.CodeMirror').evaluate((host: HTMLElement & { CodeMirror: CodeMirror.Editor }) => host.CodeMirror.getOption('readOnly'))).toBe(false)
+    await expect(page.locator('.editor-wrapper.source .mu-editor')).toHaveAttribute('contenteditable', 'false')
     await expect.poll(() => app.evaluate(({ Menu }) => {
       const menu = Menu.getApplicationMenu()!
       return ['sourceCodeModeMenuItem', 'focusModeMenuItem', 'typewriterModeMenuItem']
@@ -187,7 +188,8 @@ test('unlocking default reading retains source view and the startup source prefe
     expect(JSON.parse(readFileSync(join(userData, 'preferences.json'), 'utf8')).sourceCodeModeEnabled).toBe(true)
     await sendIpcToRenderer(app, 'mt::new-untitled-tab', true, 'new document\n')
     await expect(page.locator('.CodeMirror')).toBeVisible()
-    await expect(page.locator('.mu-read-only')).toHaveCount(0)
+    await expect.poll(() => page.locator('.CodeMirror').evaluate((host: HTMLElement & { CodeMirror: CodeMirror.Editor }) => host.CodeMirror.getOption('readOnly'))).toBe(false)
+    await expect(page.locator('.editor-wrapper.source .mu-editor')).toHaveAttribute('contenteditable', 'false')
   } finally {
     await app.evaluate(({ app }) => app.exit(0)).catch(() => {})
   }
@@ -208,7 +210,8 @@ test('entering reading retains source mode and its undo history', async() => {
     expect(readFileSync(filePath, 'utf8')).toBe('original\n')
     await toggleReadingMode(page)
     await expect(page.locator('.CodeMirror')).toBeVisible()
-    await expect(page.locator('.mu-read-only')).toHaveCount(0)
+    await expect.poll(() => page.locator('.CodeMirror').evaluate((host: HTMLElement & { CodeMirror: CodeMirror.Editor }) => host.CodeMirror.getOption('readOnly'))).toBe(false)
+    await expect(page.locator('.editor-wrapper.source .mu-editor')).toHaveAttribute('contenteditable', 'false')
     await expect(page.locator('.CodeMirror')).toContainText('source edit')
     await expect.poll(() => app.evaluate(({ Menu }) =>
       Menu.getApplicationMenu()?.getMenuItemById('sourceCodeModeMenuItem')?.checked

@@ -1,5 +1,5 @@
 import equal from 'deep-equal'
-import { isAvailableDocumentLayout, isDocumentReadOnly, resolveDocumentLayout, type AvailableDocumentLayout } from '@shared/types/documentLayout'
+import { getDocumentCapabilities, isAvailableDocumentLayout, isDocumentReadOnly, resolveDocumentLayout, type AvailableDocumentLayout } from '@shared/types/documentLayout'
 import { prepareReading, applyReadOnly } from '../services/documentMode'
 import bus from '../bus'
 import { getUniqueId, deepClone } from '../util'
@@ -190,6 +190,16 @@ export const useEditorStore = defineStore('editor', {
     },
     isPreviewLayout(): boolean {
       return this.documentLayout === 'preview'
+    },
+    documentCapabilities(): ReturnType<typeof getDocumentCapabilities> {
+      return getDocumentCapabilities(this.currentFile && {
+        documentLayout: this.documentLayout,
+        readOnly: this.currentFile.readOnly,
+        modeChanging: this.currentFile.modeChanging
+      })
+    },
+    usesSourceEditor(): boolean {
+      return this.documentCapabilities.usesCodeMirror
     },
     documentReadOnly(state): boolean {
       return isDocumentReadOnly(state.currentFile)

@@ -10,8 +10,10 @@
 import {
   registerSourceView,
   captureSourceHistory,
-  restoreSourceHistory
+  restoreSourceHistory,
+  preventSourceFocusScroll
 } from '../../services/documentMode'
+import { sourceTransitions } from '../../services/sourceTransitions'
 import { computed, ref, shallowRef, markRaw, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useEditorStore } from '@/store/editor'
 import { usePreferencesStore } from '@/store/preferences'
@@ -54,6 +56,7 @@ const tabId = ref<string | null>(null)
 let loadingContent = false
 let committedMarkdown = ''
 let sourceSearch: SourceSearch | null = null
+let sourceTransitionId: number | undefined
 
 const {
   theme,
@@ -64,7 +67,7 @@ const {
   texMathDoubleBackslash
 } = storeToRefs(preferencesStore)
 const { currentFile: currentTab } = storeToRefs(editorStore)
-const sourceCode = computed(() => editorStore.isSourceLayout)
+const sourceCode = computed(() => editorStore.usesSourceEditor)
 
 const isLocked = () => !!editorStore.documentEditingBlocked
 
@@ -146,7 +149,8 @@ const prepareTabSwitch = () => {
     captureSourceHistory(
       tabId.value,
       editor.value,
-      editorStore.tabs.find((tab) => tab.id === tabId.value)?.markdown
+      editorStore.tabs.find((tab) => tab.id === tabId.value)?.markdown,
+      sourceCodeContainer.value?.scrollTop
     )
     tabId.value = null
   }
@@ -164,7 +168,7 @@ const handleFileChange = (payload: unknown) => {
   if (reason === 'source-handoff') return
   if (!editor.value) return
 
-  if (!editorStore.isSourceLayout) {
+  if (!editorStore.usesSourceEditor) {
     prepareTabSwitch()
     return
   }
@@ -208,23 +212,28 @@ const handleFileChange = (payload: unknown) => {
   }
 
   loadingContent = true
+  let restoredState: ReturnType<typeof restoreSourceHistory> = undefined
   try {
     if (typeof newMarkdown === 'string' && editor.value.getValue() !== newMarkdown) {
       editor.value.setValue(newMarkdown)
     }
-    if (!isSameTabReload) restoreSourceHistory(id, editor.value)
+    if (!isSameTabReload) restoredState = restoreSourceHistory(id, editor.value)
+    sourceTransitionId = sourceTransitions.tokenFor(id)
     committedMarkdown = editor.value.getValue()
   } finally {
     loadingContent = false
   }
   sourceSearch?.search('', { selectHighlight: false })
 
-  if (isValidMuyaIndexCursor(muyaIndexCursor)) {
+  if (restoredState) {
+    restoreSourceScroll(id, restoredState.scrollTop)
+  } else if (isValidMuyaIndexCursor(muyaIndexCursor)) {
     const { anchor, focus } = muyaIndexCursor
 
     editor.value.setSelection(anchor, focus, { scroll: true })
   } else if (scrollTargets.length) {
     const restoreScroll = () => {
+      if (tabId.value !== id) return
       for (const { el, top } of scrollTargets) el.scrollTop = top
     }
     restoreScroll()
@@ -233,6 +242,14 @@ const handleFileChange = (payload: unknown) => {
   } else {
     setCursorAtFirstLine(editor.value)
   }
+}
+
+const restoreSourceScroll = (id: string, top = 0) => {
+  const restore = () => {
+    if (tabId.value === id && sourceCodeContainer.value) sourceCodeContainer.value.scrollTop = top
+  }
+  nextTick(restore)
+  requestAnimationFrame(restore)
 }
 
 const handleSelectAll = () => {
@@ -471,7 +488,7 @@ onMounted(() => {
   const codeMirrorConfig: Record<string, unknown> = {
     value: markdown,
     lineNumbers: sourceCodeLineNumbers.value,
-    autofocus: true,
+    autofocus: false,
     lineWrapping: true,
     styleActiveLine: true,
     extraKeys: getSourceExtraKeys(isWindows),
@@ -504,6 +521,7 @@ onMounted(() => {
 
   // CodeMirror's line tree relies on object identity and must not be proxied by Vue.
   const codeMirrorInstance = markRaw(codeMirror(container, codeMirrorConfig))
+  preventSourceFocusScroll(codeMirrorInstance.getInputField())
 
   codeMirrorInstance.setOption('mode', markdownMathMode())
 
@@ -523,9 +541,10 @@ onMounted(() => {
     setCursorAtFirstLine(codeMirrorInstance)
   }
 
-  restoreSourceHistory(id, codeMirrorInstance)
+  const restoredState = restoreSourceHistory(id, codeMirrorInstance)
   editor.value = codeMirrorInstance
   tabId.value = id
+  sourceTransitionId = sourceTransitions.tokenFor(id)
   committedMarkdown = codeMirrorInstance.getValue()
   sourceSearch = new SourceSearch(
     codeMirrorInstance,
@@ -537,10 +556,8 @@ onMounted(() => {
 
   listenChange(codeMirrorInstance)
   registerSourceView(value => codeMirrorInstance.setOption('readOnly', value))
-  if (currentTab.value.sourceScrollTop) {
-    const top = currentTab.value.sourceScrollTop
-    nextTick(() => { if (container) container.scrollTop = top })
-  }
+  restoreSourceScroll(id, restoredState?.scrollTop ?? currentTab.value.sourceScrollTop)
+  focusSource()
 })
 
 onBeforeUnmount(() => {
@@ -550,7 +567,8 @@ onBeforeUnmount(() => {
     captureSourceHistory(
       tabId.value,
       editor.value,
-      editorStore.tabs.find((tab) => tab.id === tabId.value)?.markdown
+      editorStore.tabs.find((tab) => tab.id === tabId.value)?.markdown,
+      sourceCodeContainer.value?.scrollTop
     )
   }
   viewDestroyed.value = true
@@ -574,10 +592,11 @@ onBeforeUnmount(() => {
   bus.off('pasteAsPlainText', pasteSource)
   sourceSearch?.clear()
 
-  if (editor.value && tabId.value === currentTab.value?.id) {
+  if (editor.value && tabId.value === currentTab.value?.id && !editorStore.usesSourceEditor) {
     const { cursor, markdown: newMarkdown } = getMarkdownAndCursor(editor.value)
     bus.emit('file-changed', {
       reason: 'source-handoff',
+      sourceTransitionId,
       id: tabId.value,
       markdown: newMarkdown,
       muyaIndexCursor: cursor,
