@@ -11,9 +11,9 @@ type SourceHost = HTMLElement & { CodeMirror: CodeMirror.Editor }
 const markdown = Array.from({ length: 180 }, (_, i) => `Line ${String(i + 1).padStart(3, '0')}: numbered source text`).join('\n') + '\n'
 const originalMarkdown = ['# Source state test', '', ...Array.from({ length: 180 }, (_, i) => `Line ${String(i + 1).padStart(3, '0')}: Alpha Bravo Charlie Delta Echo Foxtrot`)].join('\r\n')
 const source = (page: Page) => page.locator('.source-code .CodeMirror')
-const pressSourceKeys = async(page: Page, keys: '^{END}+({UP}{UP})' | '+({UP}{UP})' | '+{RIGHT}' | '^c') => {
+const pressSourceKeys = async(app: ElectronApplication, page: Page, keys: '^{END}+({UP}{UP})' | '+({UP}{UP})' | '+{RIGHT}' | '^c') => {
   if (process.platform === 'win32') {
-    await nativeKeys(keys)
+    await record(`native-source-keys-${test.info().attachments.length}`, JSON.parse(await nativeKeys(app, page, keys, 'source')))
   } else if (keys === '^c') {
     await page.keyboard.press('ControlOrMeta+c')
   } else if (keys === '+{RIGHT}') {
@@ -35,13 +35,12 @@ const physicalMenuLayout = async(app: ElectronApplication, page: Page, value: 's
   }
   const button = page.getByRole('button', { name: 'Application Menu', exact: true })
   if (await button.isVisible()) await button.click()
-  else if (!await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMenuBarVisible())) await nativeKeys('{F10}')
-  const pid = await app.evaluate(() => process.pid)
-  await record(`menu-${value}-${test.info().attachments.length}`, await nativeMenu(pid, ['View', 'Document Layout', value === 'source' ? 'Markdown Source' : 'Preview Only']))
+  else if (!await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].isMenuBarVisible())) await nativeKeys(app, page, '{F10}')
+  await record(`menu-${value}-${test.info().attachments.length}`, await nativeMenu(app, page, ['View', 'Document Layout', value === 'source' ? 'Markdown Source' : 'Preview Only']))
   await expect(page.locator('.editor-with-tabs')).toHaveAttribute('data-document-layout', value)
 }
 const paletteLayout = async(app: ElectronApplication, page: Page, value: 'source' | 'preview') => {
-  if (process.platform === 'win32') await nativeKeys('^+p')
+  if (process.platform === 'win32') await record(`native-palette-keys-${test.info().attachments.length}`, JSON.parse(await nativeKeys(app, page, '^+p')))
   else await sendIpcToRenderer(app, 'mt::show-command-palette')
   const input = page.locator('.search-wrapper input.search').first()
   await expect(input).toBeFocused()
@@ -118,7 +117,7 @@ test('disposable physical-selection diagnostic observes transitions without expo
     const diagnostic = readFileSync(resolve(__dirname, '../../../../docs/MarkTextPlus1/source-selection-diagnostic.js'), 'utf8')
     await page.evaluate(diagnostic)
     expect(await source(page).evaluate((host: SourceHost) => host.CodeMirror.getHistory())).toEqual(history)
-    await pressSourceKeys(page, '^{END}+({UP}{UP})')
+    await pressSourceKeys(app, page, '^{END}+({UP}{UP})')
     const before = await snapshot(page)
     await physicalMenuLayout(app, page, 'preview')
     await physicalMenuLayout(app, page, 'source')
@@ -159,14 +158,14 @@ test('exact-fixture source selections remain independent across tabs and repeate
     await clickMenuById(app, 'documentLayout-source')
     await expect(source(page)).toBeVisible()
     await source(page).click()
-    await pressSourceKeys(page, '^{END}+({UP}{UP})')
+    await pressSourceKeys(app, page, '^{END}+({UP}{UP})')
     const a = await snapshot(page)
     await sendIpcToRenderer(app, 'mt::new-untitled-tab', true, originalMarkdown)
     await expect(page.locator('.tabs-container li')).toHaveCount(2)
     await clickMenuById(app, 'documentLayout-source')
     await expect(source(page)).toBeVisible()
     await source(page).evaluate((host: SourceHost) => host.CodeMirror.setCursor({ line: 90, ch: 20 }))
-    await pressSourceKeys(page, '+({UP}{UP})')
+    await pressSourceKeys(app, page, '+({UP}{UP})')
     const b = await snapshot(page)
     for (let cycle = 0; cycle < 2; cycle++) {
       for (const [index, before] of [a, b].entries()) {
@@ -202,27 +201,27 @@ for (const fixture of ['original-crlf', 'previous-lf'] as const) {
           await source(page).click()
           if (position === 'middle') {
             await source(page).evaluate((host: SourceHost) => host.CodeMirror.setCursor({ line: 90, ch: 20 }))
-            await pressSourceKeys(page, '+({UP}{UP})')
+            await pressSourceKeys(app, page, '+({UP}{UP})')
           } else {
-            await pressSourceKeys(page, '^{END}+({UP}{UP})')
+            await pressSourceKeys(app, page, '^{END}+({UP}{UP})')
           }
           const before = await snapshot(page)
           expect(before.anchor.line).toBeGreaterThan(before.head.line)
           expect(before.markdown).toBe(fixture === 'original-crlf' ? originalMarkdown.replaceAll('\r\n', '\n') : markdown)
           expect(before.markdown.endsWith('\n')).toBe(fixture === 'previous-lf')
-          await pressSourceKeys(page, '^c')
+          await pressSourceKeys(app, page, '^c')
           const clipboardBefore = await app.evaluate(({ clipboard }) => clipboard.readText())
           expect(clipboardBefore).toBe(process.platform === 'win32' ? before.selectedText.replaceAll('\n', '\r\n') : before.selectedText)
           const switchLayout = (value: 'source' | 'preview') => route === 'palette' ? paletteLayout(app, page, value) : physicalMenuLayout(app, page, value)
           await switchLayout('preview')
           await switchLayout('source')
           const immediatelyAfter = await snapshot(page)
-          await pressSourceKeys(page, '^c')
+          await pressSourceKeys(app, page, '^c')
           const clipboardAfter = await app.evaluate(({ clipboard }) => clipboard.readText())
           const copied = await snapshot(page)
           const frames = await traceFrames(page)
           const focused = await snapshot(page)
-          await pressSourceKeys(page, '+{RIGHT}')
+          await pressSourceKeys(app, page, '+{RIGHT}')
           const extended = await snapshot(page)
           await record('original-fixture-selection', { before, clipboardBefore, immediatelyAfter, frames, focused, copied, clipboardAfter, extended, clipboardBeforeHex: Buffer.from(clipboardBefore).toString('hex'), clipboardAfterHex: Buffer.from(clipboardAfter).toString('hex') })
           for (const frame of frames) {
