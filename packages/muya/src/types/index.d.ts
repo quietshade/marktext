@@ -35,10 +35,11 @@ declare module 'flowchart.js' {
 declare module '*sequence-diagram-snap' {
     interface ISequenceDrawOptions {
         theme?: 'hand' | 'simple';
+        signal?: AbortSignal;
         [key: string]: unknown;
     }
     interface ISequenceDiagramInstance {
-        drawSVG: (container: HTMLElement | string, options?: ISequenceDrawOptions) => void;
+        drawSVG: (container: HTMLElement | string, options?: ISequenceDrawOptions) => () => void;
     }
     interface ISequenceDiagramConstructor {
         parse: (input: string) => ISequenceDiagramInstance;

@@ -30,7 +30,7 @@ class DiagramBlock extends Parent {
         !!lang
         && loadLanguage(lang)
             .then((infoList) => {
-                if (!Array.isArray(infoList))
+                if (diagramBlock.isDisposed || muya.editor.isDestroyed || !Array.isArray(infoList))
                     return;
                 const needRender = infoList.some(
                     ({ status }) => status === 'loaded' || status === 'cached',

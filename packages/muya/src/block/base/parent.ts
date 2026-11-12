@@ -210,22 +210,34 @@ class Parent extends TreeNode {
         return newNode;
     }
 
-    override remove(source: ChangeSource = ChangeSource.User) {
-        if (!this.muya.canMutate)
+    override detach(source: ChangeSource = ChangeSource.User) {
+        if (!this.muya.canMutate || !this.parent)
             return;
-        if (source === ChangeSource.User) {
+        if (source === ChangeSource.User && this.parent.children?.contains(this)) {
             const path = this._getJsonPath();
             this.jsonState.removeOperation(path);
         }
 
-        super.remove(source);
+        super.detach(source);
 
         return this;
     }
 
+    override dispose() {
+        if (this.isDisposed)
+            return;
+        super.dispose();
+        // Reparented nodes can remain in the outgoing container's linked list.
+        for (const node of [...this.children.iterator(), ...this.attachments.iterator()]) {
+            if (node.parent === this)
+                node.dispose();
+        }
+    }
+
     protected empty() {
         this.forEach((child) => {
-            this.removeChild(child, ChangeSource.Api);
+            if (child.parent === this)
+                this.removeChild(child, ChangeSource.Api);
         });
     }
 

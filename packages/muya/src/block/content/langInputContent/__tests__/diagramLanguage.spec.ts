@@ -10,7 +10,7 @@ import { Muya } from '../../../../muya';
 // language turns the block into a diagram block — what loading its ```lang
 // fence produces — instead of leaving a code block with no preview.
 
-const bootedHosts: HTMLElement[] = [];
+const bootedEditors: Muya[] = [];
 let originalVersion: string | undefined;
 let hadVersion = false;
 
@@ -21,10 +21,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-    while (bootedHosts.length) {
-        const host = bootedHosts.pop()!;
-        host.remove();
-    }
+    // Renderer imports can outlive a test; removing only the DOM leaves their owner active.
+    while (bootedEditors.length)
+        bootedEditors.pop()!.destroy();
     document.getSelection()?.removeAllRanges();
     if (hadVersion)
         window.MUYA_VERSION = originalVersion as string;
@@ -37,7 +36,7 @@ function bootMuya(markdown: string): Muya {
     document.body.appendChild(host);
     const muya = new Muya(host, { markdown } as ConstructorParameters<typeof Muya>[1]);
     muya.init();
-    bootedHosts.push(muya.domNode);
+    bootedEditors.push(muya);
     return muya;
 }
 
