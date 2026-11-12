@@ -197,14 +197,22 @@ class TextSelection {
             return null;
 
         const { anchorNode, anchorOffset, focusNode, focusOffset } = selection;
+        const { domNode: root, editor } = this._muya;
 
-        if (!anchorNode || !focusNode)
+        // Native selection is document-wide; both endpoints must belong to this live surface.
+        if (
+            !anchorNode || !focusNode
+            || editor.isDestroyed || !root.isConnected
+            || !anchorNode.isConnected || !focusNode.isConnected
+            || !root.contains(anchorNode) || !root.contains(focusNode)
+        ) {
             return null;
+        }
 
         const anchor = resolveEndpoint(anchorNode, anchorOffset);
         const focus = resolveEndpoint(focusNode, focusOffset);
 
-        if (!anchor || !focus)
+        if (!anchor || !focus || anchor.block.muya !== this._muya || focus.block.muya !== this._muya)
             return null;
 
         const anchorBlock = anchor.block;
@@ -234,10 +242,6 @@ class TextSelection {
             return '';
 
         const { anchor, focus, direction } = selection;
-        // `getSelection()` resolves whichever editor the range landed in.
-        if (anchor.block.muya !== this._muya || focus.block.muya !== this._muya)
-            return '';
-
         const [start, end] = direction === SelectionDirection.BACKWARD ? [focus, anchor] : [anchor, focus];
         if (start.block === end.block)
             return start.block.text.slice(start.offset, end.offset);

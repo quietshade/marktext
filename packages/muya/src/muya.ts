@@ -1599,6 +1599,7 @@ export class Muya {
     }
 
     destroy() {
+        this.editor.destroy();
         this._cancelReadingLink();
         this.eventCenter.detachAllDomEvents();
         this.eventCenter.unsubscribeAll();

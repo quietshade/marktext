@@ -6,7 +6,7 @@ import type { IHistorySelection } from '../selection/types';
 import type { TState } from '../state/types';
 import type { Nullable } from '../types';
 import * as otText from 'ot-text-unicode';
-import { fromEvent, merge } from 'rxjs';
+import { fromEvent, merge, Subscription } from 'rxjs';
 import { registerBlocks } from '../block';
 import { ScrollPage } from '../block/scrollPage';
 import Clipboard from '../clipboard';
@@ -246,6 +246,7 @@ export class Editor {
     scrollPage: Nullable<ScrollPage> = null;
 
     private _activeContentBlock: Nullable<Content> = null;
+    private _inputSubscriptions = new Subscription();
 
     constructor(private _muya: Muya) {
         const state = _muya.options.json || _muya.options.markdown || '';
@@ -272,6 +273,15 @@ export class Editor {
             if (block)
                 block.focusHandler();
         }
+    }
+
+    get isDestroyed() {
+        return this._inputSubscriptions.closed;
+    }
+
+    /** Stops root input dispatch; other Muya resources have separate owners. */
+    destroy() {
+        this._inputSubscriptions.unsubscribe();
     }
 
     init(options: { focus?: boolean } = {}) {
@@ -348,14 +358,14 @@ export class Editor {
             }
         };
 
-        merge(
+        this._inputSubscriptions.add(merge(
             fromEvent(domNode, 'click'),
             fromEvent(domNode, 'input'),
             fromEvent(domNode, 'keydown'),
             fromEvent(domNode, 'keyup'),
             fromEvent(domNode, 'compositionend'),
             fromEvent(domNode, 'compositionstart'),
-        ).subscribe(eventHandler);
+        ).subscribe(eventHandler));
     }
 
     focus() {
