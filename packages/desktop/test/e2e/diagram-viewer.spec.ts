@@ -135,6 +135,9 @@ const hoverDiagram = async(page: Page, index: number): Promise<void> => {
   await leaveDiagrams(page)
   const block = page.locator('.editor-component figure.mu-diagram-block').nth(index)
   await block.waitFor({ state: 'visible', timeout: 20000 })
+  // Another diagram can render first; hover only after this attachment has finalized its media.
+  await expect(block.locator('.mu-diagram-preview')).toHaveAttribute('role', 'img')
+  await expect(block.locator('.mu-diagram-preview svg').first()).toBeAttached()
   await block.scrollIntoViewIfNeeded()
   await page.waitForTimeout(150)
   const box = await block.boundingBox()

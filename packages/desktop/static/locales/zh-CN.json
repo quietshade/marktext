@@ -1084,6 +1084,14 @@
       "preview": "{name}，预览标签页"
     }
   },
+  "documentLayout": {
+    "title": "文档布局",
+    "wysiwyg": "可视化编辑器 (WYSIWYG)",
+    "source": "Markdown 源码",
+    "preview": "仅预览",
+    "openEditor": "在可视化编辑器中打开",
+    "unavailable": "仅预览布局下不可用"
+  },
   "readingMode": {
     "title": "阅读模式",
     "edit": "编辑模式",

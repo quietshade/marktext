@@ -35,6 +35,18 @@ export default function(keybindings: Keybindings): MenuItemConstructorOptions {
       }
     },
     {
+      label: t('documentLayout.title'),
+      submenu: (['wysiwyg', 'source', 'preview'] as const).map(layout => ({
+        id: `documentLayout-${layout}`,
+        label: t(`documentLayout.${layout}`),
+        type: 'radio' as const,
+        checked: layout === 'wysiwyg',
+        click(_item, focusedWindow) {
+          actions.setDocumentLayout(focusedWindow as BrowserWindow | undefined, layout)
+        }
+      }))
+    },
+    {
       id: 'typewriterModeMenuItem',
       label: t('menu.view.typewriterMode'),
       accelerator: keybindings.getAccelerator('view.typewriter-mode') ?? undefined,

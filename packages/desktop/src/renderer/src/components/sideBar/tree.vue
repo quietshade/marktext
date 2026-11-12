@@ -5,7 +5,9 @@
   >
     <div
       v-if="openedFilesInSidebar"
+      ref="openedFilesSection"
       class="opened-files"
+      :style="{ height: heldOpenedFilesHeight === null ? undefined : `${heldOpenedFilesHeight}px` }"
     >
       <div class="title">
         <el-icon
@@ -93,6 +95,9 @@
       :class="{ 'no-project': !roots.length }"
       tabindex="0"
       @mousedown="handleTreeMouseDown"
+      @dblclick="handleTreeDoubleClick"
+      @pointerleave="releaseOpenedFilesHeight"
+      @wheel.passive="releaseOpenedFilesHeight"
       @focusout="handleTreeFocusOut"
       @keydown="handleTreeKeydown"
     >
@@ -251,6 +256,8 @@ const showOpenedFiles = ref(readSectionExpanded(SHOW_OPENED_FILES_KEY))
 
 const input = ref<HTMLInputElement | null>(null)
 const treeWrapper = ref<HTMLDivElement | null>(null)
+const openedFilesSection = ref<HTMLDivElement | null>(null)
+const heldOpenedFilesHeight = ref<number | null>(null)
 
 const rootRows = new Map<string, HTMLElement>()
 const rowRegistry: TreeRowRegistry = new Map()
@@ -399,6 +406,7 @@ const revealPath = async (
 }
 
 const handleRevealPath = (pathname: unknown): void => {
+  releaseOpenedFilesHeight()
   revealPath(typeof pathname === 'string' ? pathname : null, { force: true })
 }
 
@@ -418,11 +426,27 @@ const focusTree = (): void => {
   treeWrapper.value?.focus()
 }
 
+const releaseOpenedFilesHeight = (): void => {
+  heldOpenedFilesHeight.value = null
+}
+
+const handleTreeDoubleClick = (event: MouseEvent): void => {
+  releaseOpenedFilesHeight()
+  const row = event.target instanceof Element ? event.target.closest('.side-bar-file') : null
+  if (row) revealPath(row.getAttribute('title'))
+}
+
+watch([openedFilesInSidebar, showOpenedFiles], releaseOpenedFilesHeight)
+
 // preventDefault stops the browser's default mousedown focus move (to <body>)
 // from undoing the focus() call.
 const handleTreeMouseDown = (event: MouseEvent): void => {
   if (isEditableTarget(event.target)) return
-  if (event.button === 0) event.preventDefault()
+  if (event.button === 0) {
+    // Adding a tab must not push another tree row under the second click.
+    heldOpenedFilesHeight.value ??= openedFilesSection.value?.getBoundingClientRect().height ?? null
+    event.preventDefault()
+  }
   focusTree()
 }
 
@@ -457,6 +481,7 @@ const handleDocumentContextMenu = (event: MouseEvent): void => {
 }
 
 const handleTreeKeydown = (event: KeyboardEvent): void => {
+  releaseOpenedFilesHeight()
   const { target, key, metaKey } = event
   const editableTarget = isEditableTarget(target)
 
@@ -514,11 +539,14 @@ watch(
   () => layoutStore.showSideBar && layoutStore.rightColumn === 'files',
   (visible) => {
     if (visible) revealPath(editorStore.currentFile?.pathname)
+    else releaseOpenedFilesHeight()
   },
   { flush: 'post' }
 )
 
 onMounted(() => {
+  window.addEventListener('resize', releaseOpenedFilesHeight)
+  window.addEventListener('blur', releaseOpenedFilesHeight)
   bus.on('SIDEBAR::focus-root', focusRoot)
   bus.on('SIDEBAR::show-new-input', handleInputFocus)
   bus.on('SIDEBAR::focus-tree', focusTree)
@@ -532,6 +560,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('resize', releaseOpenedFilesHeight)
+  window.removeEventListener('blur', releaseOpenedFilesHeight)
   bus.off('SIDEBAR::focus-root', focusRoot)
   bus.off('SIDEBAR::show-new-input', handleInputFocus)
   bus.off('SIDEBAR::focus-tree', focusTree)

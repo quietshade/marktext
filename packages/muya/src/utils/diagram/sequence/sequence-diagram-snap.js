@@ -1864,10 +1864,30 @@ Diagram.prototype.drawSVG = function (container, options) {
     throw new Error('Invalid container: ' + container)
   }
 
+  var disposed = false
+  var currentDrawing
+  var signal = options.signal
+  var dispose = function () {
+    if (disposed) return
+    disposed = true
+    if (signal) signal.removeEventListener('abort', dispose)
+    if (currentDrawing && currentDrawing.paper_) currentDrawing.paper_.remove()
+    currentDrawing = null
+    div = null
+  }
+  if (signal && signal.aborted) {
+    dispose()
+    return dispose
+  }
+  if (signal) signal.addEventListener('abort', dispose, { once: true })
   var Theme = Diagram.themes[options.theme]
   new Theme(this, options, function (drawing) {
+    // Font loading is not cancellable; an obsolete callback must not start a drawing.
+    if (disposed || (signal && signal.aborted)) return
+    currentDrawing = drawing
     drawing.draw(div)
   })
+  return dispose
 } // end of drawSVG
 
 export default Diagram

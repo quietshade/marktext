@@ -1084,6 +1084,14 @@
       "preview": "{name}, aba de visualização"
     }
   },
+  "documentLayout": {
+    "title": "Layout do documento",
+    "wysiwyg": "Editor visual (WYSIWYG)",
+    "source": "Código Markdown",
+    "preview": "Apenas pré-visualização",
+    "openEditor": "Abrir no editor visual",
+    "unavailable": "Indisponível na pré-visualização"
+  },
   "readingMode": {
     "title": "Modo de leitura",
     "edit": "Modo de edição",

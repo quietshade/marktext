@@ -4,6 +4,7 @@ import path from 'node:path'
 import { expect, test } from '@playwright/test'
 import { _electron, type ElectronApplication, type Page } from 'playwright'
 import {
+  createElectronEnvironment,
   expectNoRendererErrors,
   getElectronPath,
   launchElectron,
@@ -120,7 +121,7 @@ test('multi-folder sidebar completes add, search, remove and restore (#2222)', a
       executablePath: getElectronPath(),
       args: [path.resolve(__dirname, '../..'), '--user-data-dir', userData],
       cwd: path.resolve(__dirname, '../..'),
-      env: { ...process.env, MARKTEXT_ERROR_INTERACTION: '1' }
+      env: createElectronEnvironment(process.env, { MARKTEXT_ERROR_INTERACTION: '1' })
     })
     page = await app.firstWindow()
     await expect(roots()).toHaveCount(2)

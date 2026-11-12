@@ -1,7 +1,7 @@
 import type { Muya } from '../../../muya';
 import type { IDiagramState, TState } from '../../../state/types';
 import type { IPreviewDiagramPayload } from '../../../ui/previewToolBar';
-import { fromEvent } from 'rxjs';
+import { fromEvent, Subscription } from 'rxjs';
 import { CLASS_NAMES, PREVIEW_DOMPURIFY_CONFIG } from '../../../config';
 import { sanitize } from '../../../utils';
 import { finalizeRenderedDiagram, renderDiagram } from '../../../utils/diagram/render';
@@ -15,6 +15,8 @@ class DiagramPreview extends Parent {
     private _type: string;
     private _rendered = false;
     private _cancelFinalize: (() => void) | null = null;
+    private _clickSubscription = new Subscription();
+    private _renderController: AbortController | null = null;
     static override blockName = 'diagram-preview';
 
     static create(muya: Muya, state: IDiagramState) {
@@ -50,10 +52,24 @@ class DiagramPreview extends Parent {
 
     private _attachDOMEvents() {
         const clickObservable = fromEvent(this.domNode!, 'click');
-        clickObservable.subscribe(this.clickHandler.bind(this));
+        this._clickSubscription.add(clickObservable.subscribe(this.clickHandler.bind(this)));
+    }
+
+    override dispose() {
+        if (this.isDisposed)
+            return;
+        super.dispose();
+        this._renderController?.abort();
+        this._renderController = null;
+        this._cancelFinalize?.();
+        this._cancelFinalize = null;
+        this._clickSubscription.unsubscribe();
+        this._rendered = false;
     }
 
     clickHandler(event: Event) {
+        if (this.isDisposed || this.muya.editor?.isDestroyed)
+            return;
         event.preventDefault();
         event.stopPropagation();
 
@@ -77,6 +93,12 @@ class DiagramPreview extends Parent {
     }
 
     async update(code = this._code) {
+        if (this.isDisposed || this.muya.editor?.isDestroyed)
+            return;
+        this._renderController?.abort();
+        const controller = new AbortController();
+        this._renderController = controller;
+        const isCurrent = () => !controller.signal.aborted && !this.isDisposed && !this.muya.editor?.isDestroyed;
         const { i18n } = this.muya;
         this._rendered = false;
         if (this._code !== code)
@@ -90,24 +112,35 @@ class DiagramPreview extends Parent {
         this.domNode!.removeAttribute('aria-label');
 
         if (code) {
-            this.domNode!.innerHTML = i18n.t('Loading...');
+            // Third-party renderers may write during awaits; each request gets a retired-on-abort target.
+            const target = document.createElement('div');
+            target.className = 'mu-diagram-render';
+            target.textContent = i18n.t('Loading...');
+            this.domNode!.replaceChildren(target);
+            controller.signal.addEventListener('abort', () => target.remove(), { once: true });
             const { mermaidTheme, vegaTheme, plantumlServer, sequenceTheme } = this.muya.options;
             const { _type: type } = this;
 
             try {
                 await renderDiagram({
-                    target: this.domNode!,
+                    target,
                     code,
                     type,
                     mermaidTheme,
                     vegaTheme,
                     plantumlServer,
                     sequenceTheme,
+                    signal: controller.signal,
                 });
+                if (!isCurrent())
+                    return;
                 this._rendered = true;
                 this._cancelFinalize = finalizeRenderedDiagram(this.domNode!, i18n.t('Diagram'));
             }
             catch (error) {
+                if (!isCurrent())
+                    return;
+                controller.abort();
                 const detail
                     = error instanceof Error ? error.message : String(error);
                 debug.error(`render ${type} diagram failed: ${detail}`);

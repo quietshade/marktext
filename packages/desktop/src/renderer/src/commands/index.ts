@@ -3,6 +3,7 @@ import { delay, isMac } from '@/util'
 import { isUpdatable } from './utils'
 import getCommandDescriptionById from './descriptions'
 import { t } from '../i18n'
+import { useEditorStore } from '../store/editor'
 
 export { default as FileEncodingCommand } from './fileEncoding'
 export { default as LineEndingCommand } from './lineEnding'
@@ -575,6 +576,10 @@ const commands: CommandDescriptor[] = [
       bus.emit('view:toggle-view-entry', 'sourceCode')
     }
   },
+  ...(['wysiwyg', 'source', 'preview'] as const).map(layout => ({
+    id: `view.layout-${layout}`,
+    execute: async() => { useEditorStore().SET_DOCUMENT_LAYOUT(layout) }
+  })),
   {
     id: 'view.typewriter-mode',
     execute: async() => {

@@ -2,7 +2,7 @@
   <div
     class="editor-wrapper"
     :class="[
-      { typewriter: typewriter, focus: focus, source: sourceCode, 'viewer-open': viewerOpen }
+      { typewriter: typewriter, focus: focus, source: sourceCode, preview: editorStore.isPreviewLayout, 'viewer-open': viewerOpen }
     ]"
     :dir="textDirection"
   >
@@ -66,7 +66,6 @@
         </div>
       </template>
     </el-dialog>
-    <editor-search v-if="!sourceCode" />
   </div>
 </template>
 
@@ -103,7 +102,6 @@ import {
   TableDragBar,
   TableRowColumMenu,
   wordCount as muyaWordCount,
-  type IHistorySelection,
   type IPreviewDiagramPayload,
   type IMuyaOptions,
   type IReplaceOption,
@@ -113,7 +111,6 @@ import {
 import { getMuyaLocale } from '@/util/muyaLocale'
 import { exportStyledHTML, type HeaderFooterPart } from '@/util/exportHtml'
 import { applyCursor, isIndexCursor } from '@/util/cursor'
-import EditorSearch from '../search/index.vue'
 import MediaViewer from '../mediaViewer/index.vue'
 import bus from '@/bus'
 import { DEFAULT_EDITOR_FONT_FAMILY, DEFAULT_CODE_FONT_FAMILY } from '@/config'
@@ -124,6 +121,7 @@ import { SpellChecker } from '@/spellchecker'
 import { isMac, animatedScrollTo } from '@/util'
 import { moveImageToFolder, uploadImage } from '@/util/fileSystem'
 import { guessClipboardFilePath } from '@/util/clipboard'
+import { installPreviewClipboard } from '@/util/previewClipboard'
 import { dataURLToFile } from '@/util/dataURLToFile'
 import { getCssForOptions, getHtmlToc, type PdfCssOptions, type HtmlTocOptions } from '@/util/pdf'
 import {
@@ -139,6 +137,7 @@ import {
   registerDocumentView,
   pruneSourceHistory
 } from '../../services/documentMode'
+import { sourceTransitions } from '../../services/sourceTransitions'
 import { popupContextMenu } from '../../contextMenu/popupMenu'
 import { useEditorStore } from '@/store/editor'
 import { useProjectStore } from '@/store/project'
@@ -239,17 +238,20 @@ const {
   language,
 
   typewriter: typewriterPreference,
-  focus: focusPreference,
-  sourceCode: sourceCodePreference
+  focus: focusPreference
 } = storeToRefs(preferencesStore)
 
 const { currentFile, tabs } = storeToRefs(editorStore)
-const sourceCode = computed(() => sourceCodePreference.value && !currentFile.value?.readOnly)
-const typewriter = computed(() => typewriterPreference.value && !currentFile.value?.readOnly)
-const focus = computed(() => focusPreference.value && !currentFile.value?.readOnly)
+const sourceCode = computed(() => editorStore.usesSourceEditor)
+const documentReadOnly = computed(() => editorStore.documentReadOnly)
+const visualReadOnly = computed(() => !editorStore.documentCapabilities.visualEditable)
+let previewClipboard: ReturnType<typeof installPreviewClipboard> | undefined
+const typewriter = computed(() => typewriterPreference.value && !documentReadOnly.value)
+const focus = computed(() => focusPreference.value && !documentReadOnly.value)
 let loadingContent = false
+let loadedTabId = currentFile.value?.id
 const readingSelectionChanged = () => {
-  if (!currentFile.value?.readOnly || !editor.value) return
+  if (!documentReadOnly.value || !editor.value) return
   const selection = document.getSelection()
   if (selection?.anchorNode && editor.value.domNode.contains(selection.anchorNode)) {
     setSelectionWordCountFromText(selection.toString())
@@ -290,9 +292,6 @@ let scrollHandler: ((e: Event) => void) | null = null
 // Keep engine undo history per tab; the store uses a separate save-tracking history shape.
 const engineHistoryByTab = new Map<string, ISerializedHistory>()
 
-// Capture the WYSIWYG caret before source mode moves DOM focus into CodeMirror.
-let preSourceModeSelection: IHistorySelection | null = null
-
 // Track save state by content with monotonic IDs; undo depth is reused for different documents.
 const syntheticHistoryByTab = new Map<string, SyntheticHistory>()
 const getSyntheticHistory = (id: string, baselineContent: string): SyntheticHistory => {
@@ -314,6 +313,7 @@ const makeSyntheticHistory = (id: string, content: string): IFileHistoryLike => 
 // Tab IDs are session-unique; prune closed tabs so per-tab maps cannot grow indefinitely.
 const pruneClosedTabState = (liveTabIds: Set<string>): void => {
   pruneSourceHistory(liveTabIds)
+  sourceTransitions.prune(liveTabIds)
   for (const id of engineHistoryByTab.keys()) {
     if (!liveTabIds.has(id)) engineHistoryByTab.delete(id)
   }
@@ -750,8 +750,7 @@ watch(currentFile, (value, oldValue) => {
 watch(
   sourceCode,
   (value, oldValue) => {
-    if (value && value !== oldValue) {
-      if (editor.value?.isReadOnly) return
+    if (value && value !== oldValue && loadedTabId === currentFile.value?.id) {
       // The viewer holds a rendering of a document that is about to stop being
       // shown, and holds the editor behind it inert while it is up.
       mediaViewer.value?.close()
@@ -766,13 +765,10 @@ watch(
         // (#2938).
         editor.value.flush()
         // Save a source-markdown cursor before the source view mounts and moves focus.
-        if (currentFile.value) {
+        if (currentFile.value && !editor.value.isReadOnly) {
           currentFile.value.muyaIndexCursor = editor.value.getCursorOffset() ?? null
         }
-        // Capture the block-key caret too (same fresh selection getCursorOffset
-        // reads) so the post-handoff undo can restore it — see
-        // `preSourceModeSelection`.
-        preSourceModeSelection = editor.value.getSelection()
+        if (currentFile.value) sourceTransitions.begin(currentFile.value.id, currentFile.value.markdown, editor.value)
       }
     }
   },
@@ -780,7 +776,7 @@ watch(
 )
 
 watch(
-  () => currentFile.value?.readOnly,
+  visualReadOnly,
   (value) => {
     editor.value?.setReadOnly(!!value)
   },
@@ -1008,6 +1004,7 @@ const openSpellcheckerLanguageCommand = () => {
 }
 
 const replaceMisspelling = (payload: unknown) => {
+  if (sourceCode.value || documentReadOnly.value || currentFile.value?.modeChanging) return
   const { word, replacement } = payload as { word: string; replacement: string }
   if (editor.value) {
     editor.value.replaceCurrentWordInlineUnsafe(word, replacement)
@@ -1015,7 +1012,7 @@ const replaceMisspelling = (payload: unknown) => {
 }
 
 const handleUndo = () => {
-  if (sourceCode.value) {
+  if (sourceCode.value || documentReadOnly.value || currentFile.value?.modeChanging) {
     return
   }
 
@@ -1025,7 +1022,7 @@ const handleUndo = () => {
 }
 
 const handleRedo = () => {
-  if (sourceCode.value) {
+  if (sourceCode.value || documentReadOnly.value || currentFile.value?.modeChanging) {
     return
   }
 
@@ -1060,7 +1057,13 @@ const COPY_PASTE_METHOD_MAP: Record<string, 'copyAsRich' | 'copyAsHtml' | 'paste
   pasteAsPlainText: 'pasteAsPlainText'
 }
 const handleCopyPaste = (type: unknown) => {
+  if (sourceCode.value) return
+  if (type === 'pasteAsPlainText' && (documentReadOnly.value || currentFile.value?.modeChanging)) return
   if (editor.value) {
+    if (editorStore.isPreviewLayout && type === 'copyAsHtml') {
+      previewClipboard?.copyHtml()
+      return
+    }
     const method = COPY_PASTE_METHOD_MAP[type as string]
     if (method) editor.value[method]()
   }
@@ -1090,20 +1093,20 @@ const toSearchMatches = (result: unknown) => {
 }
 
 const handleSearch = (payload: unknown) => {
-  if (!editor.value) return
+  if (!editor.value || sourceCode.value) return
   const { value, opt } = payload as { value: string; opt?: ISearchOption }
   editorStore.SEARCH(toSearchMatches(editor.value.search(value, opt)))
   scrollToHighlight()
 }
 
 const handReplace = (payload: unknown) => {
-  if (!editor.value) return
+  if (!editor.value || sourceCode.value || documentReadOnly.value || currentFile.value?.modeChanging) return
   const { value, opt } = payload as { value: string; opt?: IReplaceOption }
   editorStore.SEARCH(toSearchMatches(editor.value.replace(value, opt)))
 }
 
 const handleFindAction = (action: unknown) => {
-  if (!editor.value) return
+  if (!editor.value || sourceCode.value) return
   editorStore.SEARCH(toSearchMatches(editor.value.find(action as 'previous' | 'next')))
   scrollToHighlight()
 }
@@ -1376,7 +1379,7 @@ const pushSelectionMenuState = (changes: MuyaChange) => {
 }
 
 const handleEditParagraph = (type: unknown) => {
-  if (sourceCode.value) {
+  if (sourceCode.value || documentReadOnly.value || currentFile.value?.modeChanging) {
     return
   }
   if (type === 'table') {
@@ -1398,7 +1401,7 @@ const handleEditParagraph = (type: unknown) => {
 }
 
 const handleParagraph = (type: unknown) => {
-  if (sourceCode.value) {
+  if (sourceCode.value || documentReadOnly.value || currentFile.value?.modeChanging) {
     return
   }
   if (editor.value) {
@@ -1419,7 +1422,7 @@ const handleParagraph = (type: unknown) => {
 }
 
 const handleInlineFormat = (type: unknown) => {
-  if (sourceCode.value) {
+  if (sourceCode.value || documentReadOnly.value || currentFile.value?.modeChanging) {
     return
   }
   editor.value && editor.value.format(type as string)
@@ -1427,6 +1430,7 @@ const handleInlineFormat = (type: unknown) => {
 
 const handleDialogTableConfirm = () => {
   dialogTableVisible.value = false
+  if (sourceCode.value || documentReadOnly.value || currentFile.value?.modeChanging) return
   editor.value && editor.value.createTable(tableChecker)
 }
 
@@ -1439,6 +1443,7 @@ interface FileLoadedPayload {
 const setMarkdownToEditor = (payload: unknown) => {
   const { id, markdown: newMarkdown, cursor: newCursor } = (payload ?? {}) as FileLoadedPayload
   if (editor.value) {
+    loadedTabId = id
     // `setContent` resets the document and clears the undo history; only set a
     // cursor afterwards (a freshly-opened file has no history to restore).
     editor.value.setContent(newMarkdown ?? '')
@@ -1458,6 +1463,10 @@ const setMarkdownToEditor = (payload: unknown) => {
     // `json-change`, so seed the TOC explicitly (otherwise it stays empty until
     // the first edit, and a file switch keeps the previous file's TOC).
     editorStore.UPDATE_TOC(editor.value.getTOC())
+    if (id && sourceCode.value) {
+      sourceTransitions.discard(id)
+      sourceTransitions.begin(id, currentFile.value?.markdown ?? newMarkdown ?? '', editor.value)
+    }
     // A freshly created/opened tab should be ready to type into.
     if (editorStore.TAKE_OPEN_INTENT(currentFile.value?.pathname) !== false) focusFreshEditor()
   }
@@ -1465,6 +1474,7 @@ const setMarkdownToEditor = (payload: unknown) => {
 
 interface FileChangePayload {
   reason?: string
+  sourceTransitionId?: number
   id?: string
   markdown?: string
   cursor?: unknown
@@ -1482,56 +1492,41 @@ const handleFileChange = (payload: unknown) => {
     markdown: newMarkdown,
     cursor: newCursor,
     muyaIndexCursor,
-    history: payloadHistory,
     scrollTop,
     isReload,
-    reason
+    reason,
+    sourceTransitionId
   } = (payload ?? {}) as FileChangePayload
   if (!editor.value) return
   const container = getScrollContainer()
   if (!container) return
 
   if (typeof newMarkdown === 'string') {
-    // Returning from source-code mode: the WYSIWYG engine is never unmounted
-    // while source mode is up (index.vue overlays it via `v-if`), so it still
-    // holds the PRE-source-mode document and undo history. Record the bulk
-    // source-mode edit as a SINGLE engine undo boundary via `replaceContent`
-    // (PG14 parity): the first Ctrl+Z after the handoff reverts the entire
-    // source-mode change in one step, matching legacy muyajs' full-state
-    // snapshot history. `replaceContent` builds a fully-invertible whole-document
-    // ot-json1 op and applies undo/redo via a full block-tree rebuild (never the
-    // incremental pick/drop walker), so arbitrary block-type changes round-trip
-    // safely.
-    //
-    // Detection: only sourceCode.vue's onBeforeUnmount emits `file-changed` with
-    // a source-mode index cursor AND no block-key `cursor` AND no `history`
-    // (see sourceCode.vue ~L368). Every tab-switch / file-reload emitter in
-    // editor.ts carries both `cursor` and `history` alongside, so requiring
-    // those absent reliably isolates the WYSIWYG<-source handoff from a tab
-    // activation that merely replays a tab's persisted `muyaIndexCursor`.
-    const isSourceModeHandoff =
-      reason === 'source-handoff' ||
-      (isIndexCursor(muyaIndexCursor) && !newCursor && payloadHistory == null)
-
-    if (isSourceModeHandoff) {
-      // Record source edits as one undo boundary; remap the caret even when content is unchanged.
+    if (reason === 'source-handoff') {
+      if (!id || sourceCode.value) return
       loadingContent = true
       try {
-        editor.value.replaceContent(newMarkdown, preSourceModeSelection)
-        if (id) {
-          engineHistoryByTab.set(id, editor.value.getHistory())
-          if (currentFile.value?.id === id)
-            currentFile.value.history = makeSyntheticHistory(id, newMarkdown)
-        }
+        const result = sourceTransitions.reconcile({
+          documentId: id,
+          activeDocumentId: currentFile.value?.id,
+          loadedDocumentId: loadedTabId,
+          token: sourceTransitionId,
+          canonicalMarkdown: currentFile.value?.markdown ?? '',
+          markdown: newMarkdown
+        }, editor.value)
+        if (result === 'stale') return
+        engineHistoryByTab.set(id, editor.value.getHistory())
+        if (result === 'changed' && currentFile.value?.id === id)
+          currentFile.value.history = makeSyntheticHistory(id, newMarkdown)
       } finally {
         loadingContent = false
       }
-      preSourceModeSelection = null
       editorStore.UPDATE_TOC(editor.value.getTOC())
       // Map the CodeMirror `{ line, ch }` cursor onto a block-key cursor so the
       // WYSIWYG caret lands where the source-mode cursor was (PG2).
       if (isIndexCursor(muyaIndexCursor)) editor.value.setCursorByOffset(muyaIndexCursor)
     } else if (isReload) {
+      loadedTabId = id
       // Keep external disk reloads undoable, restoring the pre-reload document on the first undo.
       if (id) {
         resetSyntheticHistory(id, newMarkdown)
@@ -1547,7 +1542,12 @@ const handleFileChange = (payload: unknown) => {
       if (newCursor) {
         applyCursor(editor.value, newCursor)
       }
+      if (id) {
+        sourceTransitions.discard(id)
+        if (sourceCode.value) sourceTransitions.begin(id, currentFile.value?.markdown ?? newMarkdown, editor.value)
+      }
     } else {
+      loadedTabId = id
       // setContent clears history; restore this tab’s engine history after replacing its document.
       editor.value.setContent(newMarkdown)
       // Tab switch swaps content without firing `json-change`, so re-seed the
@@ -1569,6 +1569,7 @@ const handleFileChange = (payload: unknown) => {
       // Seed new trackers before edits; retain existing content IDs when switching back to a tab.
       if (id) {
         getSyntheticHistory(id, editor.value.getMarkdown())
+        if (sourceCode.value) sourceTransitions.begin(id, currentFile.value?.markdown ?? newMarkdown, editor.value)
       }
     }
   } else if (newCursor) {
@@ -1594,12 +1595,14 @@ const blurEditor = () => {
 }
 
 const flushActiveEditor = () => {
+  if (sourceCode.value) return
   editor.value?.flush()
 }
 
 // The engine's `focus()` only sets the selection range; the contenteditable
 // also needs DOM focus or no caret blinks.
 const focusEditor = () => {
+  if (sourceCode.value) return
   const ed = editor.value
   if (!ed) return
   ed.domNode.focus()
@@ -1637,6 +1640,7 @@ const handleModalOpening = () => {
 
 // Chromium no longer fires programmatic paste; insert the saved screenshot via imageAction.
 const handleScreenShot = (filePath?: unknown) => {
+  if (sourceCode.value || documentReadOnly.value || currentFile.value?.modeChanging) return
   if (editor.value && typeof filePath === 'string' && filePath) {
     editor.value.pasteImage(filePath)
   }
@@ -1699,7 +1703,7 @@ onMounted(() => {
   const options: Partial<IMuyaOptions> = {
     focusMode: focus.value,
     markdown: props.markdown,
-    readOnly: !!currentFile.value?.readOnly,
+    readOnly: visualReadOnly.value,
     locale: getMuyaLocale(language.value),
     preferLooseListItem: preferLooseListItem.value,
     autoPairBracket: autoPairBracket.value,
@@ -1759,6 +1763,7 @@ onMounted(() => {
 
   // Keep the engine outside Vue proxies: DOM/block identity is required by rendering.
   const muya = markRaw(new Muya(ele, options))
+  previewClipboard = installPreviewClipboard(muya.domNode, () => editorStore.isPreviewLayout)
   muya.init({ focus: editorStore.TAKE_OPEN_INTENT(currentFile.value?.pathname) !== false })
   editor.value = muya
   muya.on(
@@ -1782,7 +1787,7 @@ onMounted(() => {
           {
             label: t('menu.edit.copyAsHtml'),
             enabled: hasSelection,
-            click: () => muya.copyAsHtml()
+            click: () => handleCopyPaste('copyAsHtml')
           },
           { label: t('menu.edit.selectAll'), click: () => muya.selectAll() },
           ...(href
@@ -1807,7 +1812,7 @@ onMounted(() => {
     }
   )
   document.addEventListener('selectionchange', readingSelectionChanged)
-  registerDocumentView((value) => muya.setReadOnly(value))
+  registerDocumentView((value) => muya.setReadOnly(value || visualReadOnly.value))
   // The first document's content is set via constructor options, so no
   // `file-loaded` / `setMarkdownToEditor` runs for it — seed its TOC here.
   editorStore.UPDATE_TOC(muya.getTOC())
@@ -1815,6 +1820,7 @@ onMounted(() => {
   // Seed the mount-loaded document before its first edit so pristine content maps to ID 0.
   if (currentFile.value?.id) {
     getSyntheticHistory(currentFile.value.id, muya.getMarkdown())
+    if (sourceCode.value) sourceTransitions.begin(currentFile.value.id, currentFile.value.markdown, muya)
   }
 
   const container = getScrollContainer()!
@@ -1865,7 +1871,7 @@ onMounted(() => {
 
   // Engine json-change emits operations; the desktop pipeline consumes a derived document snapshot.
   editor.value.on('json-change', () => {
-    if (loadingContent || currentFile.value?.readOnly) return
+    if (loadingContent || sourceCode.value || documentReadOnly.value) return
     // Capture the tab ID before a later tab switch can redirect this update.
     if (!currentFile.value || !editor.value) return
     const { id } = currentFile.value
@@ -1909,7 +1915,7 @@ onMounted(() => {
     'format-click',
     ({ event, formatType, data }: { event: MouseEvent; formatType: string; data: unknown }) => {
       const ctrlOrMeta = (isMac && event.metaKey) || (!isMac && event.ctrlKey)
-      if (formatType === 'link' && (ctrlOrMeta || currentFile.value?.readOnly)) {
+      if (formatType === 'link' && (ctrlOrMeta || documentReadOnly.value)) {
         editorStore.FORMAT_LINK_CLICK({
           data: data as { href: string; [key: string]: unknown },
           dirname: window.DIRNAME
@@ -1949,7 +1955,7 @@ onMounted(() => {
 
   editor.value.on('selection-change', (changes: MuyaChange) => {
     const y = (changes.cursorCoords?.y ?? null) as number | null
-    if (y != null && !currentFile.value?.readOnly) {
+    if (y != null && !documentReadOnly.value) {
       // Before the scrolling below: a 0-duration `animatedScrollTo` assigns
       // `scrollTop` at once, moving the headings out from under `y`.
       updateActiveHeading(y)
@@ -1994,6 +2000,8 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  sourceTransitions.prune(new Set())
+  previewClipboard?.dispose()
   registerDocumentView(null)
   document.removeEventListener('selectionchange', readingSelectionChanged)
   bus.off('file-loaded', setMarkdownToEditor)
@@ -2107,6 +2115,15 @@ onBeforeUnmount(() => {
   box-sizing: border-box;
   cursor: default;
   overflow-anchor: none !important;
+}
+
+/* Preview has no source-marker caret positions. Removing their layout boxes
+   also keeps Chromium's native selection text free of Markdown syntax. */
+.editor-wrapper.preview .mu-remove,
+.editor-wrapper.preview .mu-hide:not(.mu-math, .mu-ruby, .mu-emoji-marked-text, .mu-html-escape),
+.editor-wrapper.preview .mu-math-text,
+.editor-wrapper.preview .mu-ruby-text {
+  display: none !important;
 }
 
 .editor-component .mu-container {

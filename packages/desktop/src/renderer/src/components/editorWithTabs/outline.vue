@@ -61,7 +61,6 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useI18n } from 'vue-i18n'
-import { usePreferencesStore } from '@/store/preferences'
 import { useEditorStore } from '@/store/editor'
 import { useLayoutStore } from '@/store/layout'
 import Toc from '../sideBar/toc.vue'
@@ -71,7 +70,6 @@ const { t } = useI18n()
 const layoutStore = useLayoutStore()
 const { showToc } = storeToRefs(layoutStore)
 const editorStore = useEditorStore()
-const preferencesStore = usePreferencesStore()
 const hasHeadings = computed(() => editorStore.listToc.length > 0)
 const outlineRef = ref<HTMLElement | null>(null)
 const toggleRef = ref<HTMLButtonElement | null>(null)
@@ -118,7 +116,7 @@ const toggle = (): void => {
 const updateDocking = (): void => {
   const container = outlineRef.value?.parentElement
   if (!container) return
-  const selector = preferencesStore.sourceCode ? '.source-code .CodeMirror' : '.editor-wrapper:not(.source) .mu-container'
+  const selector = editorStore.isSourceLayout ? '.source-code .CodeMirror' : '.editor-wrapper:not(.source) .mu-container'
   const column = container.querySelector<HTMLElement>(selector)
   if (column !== observedColumn) {
     if (observedColumn) observer?.unobserve(observedColumn)
@@ -129,7 +127,7 @@ const updateDocking = (): void => {
   // reserve enough room for the 220px outline plus a 24px gap.
   compact.value = !column || column.getBoundingClientRect().left - container.getBoundingClientRect().left < 244
 }
-watch([hasHeadings, () => editorStore.currentFile?.id, () => preferencesStore.sourceCode], () => nextTick(updateDocking), { flush: 'post' })
+watch([hasHeadings, () => editorStore.currentFile?.id, () => editorStore.documentLayout], () => nextTick(updateDocking), { flush: 'post' })
 onMounted(() => {
   const container = outlineRef.value?.parentElement
   if (!container) return

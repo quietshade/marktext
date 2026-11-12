@@ -10,9 +10,11 @@
 import {
   registerSourceView,
   captureSourceHistory,
-  restoreSourceHistory
+  restoreSourceHistory,
+  preventSourceFocusScroll
 } from '../../services/documentMode'
-import { ref, shallowRef, markRaw, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { sourceTransitions } from '../../services/sourceTransitions'
+import { computed, ref, shallowRef, markRaw, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useEditorStore } from '@/store/editor'
 import { usePreferencesStore } from '@/store/preferences'
 import {
@@ -28,6 +30,9 @@ import { adjustCursor, isWindows } from '../../util'
 import { getSourceExtraKeys } from '../../codeMirror/keybindings'
 import bus from '../../bus'
 import { oneDarkThemes, railscastsThemes } from '@/config'
+import { SourceSearch } from '../../codeMirror/sourceSearch'
+import { popupContextMenu } from '../../contextMenu/popupMenu'
+import { t } from '../../i18n'
 
 interface MuyaIndexCursorLike {
   anchor: CodeMirror.Position
@@ -48,10 +53,13 @@ const sourceCodeContainer = ref<HTMLDivElement | null>(null)
 const editor = shallowRef<CodeMirror.Editor | null>(null)
 const viewDestroyed = ref(false)
 const tabId = ref<string | null>(null)
+let loadingContent = false
+let committedMarkdown = ''
+let sourceSearch: SourceSearch | null = null
+let sourceTransitionId: number | undefined
 
 const {
   theme,
-  sourceCode,
   sourceCodeLineNumbers,
   texMathDollars,
   texMathGfm,
@@ -59,6 +67,15 @@ const {
   texMathDoubleBackslash
 } = storeToRefs(preferencesStore)
 const { currentFile: currentTab } = storeToRefs(editorStore)
+const sourceCode = computed(() => editorStore.usesSourceEditor)
+
+const isLocked = () => !!editorStore.documentEditingBlocked
+
+watch(
+  () => [currentTab.value?.readOnly, currentTab.value?.modeChanging, currentTab.value?.documentLayout],
+  () => editor.value?.setOption('readOnly', isLocked()),
+  { flush: 'sync' }
+)
 
 const isValidMuyaIndexCursor = (cursor: unknown): cursor is MuyaIndexCursorLike => {
   const c = cursor as MuyaIndexCursorLike | null | undefined
@@ -128,16 +145,12 @@ const getMarkdownAndCursor = (cm: CodeMirror.Editor) => {
 
 const prepareTabSwitch = () => {
   if (tabId.value && editor.value) {
-    const { cursor, markdown: newMarkdown } = getMarkdownAndCursor(editor.value)
-    editorStore.LISTEN_FOR_CONTENT_CHANGE({
-      id: tabId.value,
-      markdown: newMarkdown,
-      muyaIndexCursor: cursor
-    })
+    saveContent(editor.value)
     captureSourceHistory(
       tabId.value,
       editor.value,
-      editorStore.tabs.find((tab) => tab.id === tabId.value)?.markdown
+      editorStore.tabs.find((tab) => tab.id === tabId.value)?.markdown,
+      sourceCodeContainer.value?.scrollTop
     )
     tabId.value = null
   }
@@ -154,6 +167,11 @@ const handleFileChange = (payload: unknown) => {
   const { id, markdown: newMarkdown, muyaIndexCursor, reason } = payload as FileChangePayloadLike
   if (reason === 'source-handoff') return
   if (!editor.value) return
+
+  if (!editorStore.usesSourceEditor) {
+    prepareTabSwitch()
+    return
+  }
 
   // On same-tab reload (external file change), preserve scroll across
   // setValue. Snapshot every plausible scroll element (the outer
@@ -193,17 +211,29 @@ const handleFileChange = (payload: unknown) => {
     tabId.value = id
   }
 
-  if (typeof newMarkdown === 'string' && editor.value.getValue() !== newMarkdown) {
-    editor.value.setValue(newMarkdown)
+  loadingContent = true
+  let restoredState: ReturnType<typeof restoreSourceHistory> = undefined
+  try {
+    if (typeof newMarkdown === 'string' && editor.value.getValue() !== newMarkdown) {
+      editor.value.setValue(newMarkdown)
+    }
+    if (!isSameTabReload) restoredState = restoreSourceHistory(id, editor.value)
+    sourceTransitionId = sourceTransitions.tokenFor(id)
+    committedMarkdown = editor.value.getValue()
+  } finally {
+    loadingContent = false
   }
-  if (!isSameTabReload) restoreSourceHistory(id, editor.value)
+  sourceSearch?.search('', { selectHighlight: false })
 
-  if (isValidMuyaIndexCursor(muyaIndexCursor)) {
+  if (restoredState) {
+    restoreSourceScroll(id, restoredState.scrollTop)
+  } else if (isValidMuyaIndexCursor(muyaIndexCursor)) {
     const { anchor, focus } = muyaIndexCursor
 
     editor.value.setSelection(anchor, focus, { scroll: true })
   } else if (scrollTargets.length) {
     const restoreScroll = () => {
+      if (tabId.value !== id) return
       for (const { el, top } of scrollTargets) el.scrollTop = top
     }
     restoreScroll()
@@ -212,6 +242,14 @@ const handleFileChange = (payload: unknown) => {
   } else {
     setCursorAtFirstLine(editor.value)
   }
+}
+
+const restoreSourceScroll = (id: string, top = 0) => {
+  const restore = () => {
+    if (tabId.value === id && sourceCodeContainer.value) sourceCodeContainer.value.scrollTop = top
+  }
+  nextTick(restore)
+  requestAnimationFrame(restore)
 }
 
 const handleSelectAll = () => {
@@ -234,7 +272,7 @@ const handleSelectAll = () => {
 }
 
 const handleUndo = () => {
-  if (!sourceCode.value) {
+  if (!sourceCode.value || isLocked()) {
     return
   }
 
@@ -244,7 +282,7 @@ const handleUndo = () => {
 }
 
 const handleRedo = () => {
-  if (!sourceCode.value) {
+  if (!sourceCode.value || isLocked()) {
     return
   }
 
@@ -261,7 +299,7 @@ interface ImageActionPayload {
 
 const handleImageAction = (payload: unknown) => {
   const cm = editor.value
-  if (!cm) return
+  if (!cm || isLocked()) return
 
   const { id, result, alt } = payload as ImageActionPayload
   const value: string = cm.getValue()
@@ -334,6 +372,9 @@ const updateSelectionWordCount = (cm: CodeMirror.Editor) => {
 }
 
 const saveContent = (cm: CodeMirror.Editor) => {
+  if (loadingContent || cm.getValue() === committedMarkdown) return
+  const tab = editorStore.tabs.find(tab => tab.id === tabId.value)
+  if (!tab || tab.readOnly) return
   const { cursor, markdown: newMarkdown } = getMarkdownAndCursor(cm)
   const wordCount = getWordCount(newMarkdown)
   if (!viewDestroyed.value) {
@@ -344,6 +385,7 @@ const saveContent = (cm: CodeMirror.Editor) => {
         wordCount,
         muyaIndexCursor: cursor
       })
+      committedMarkdown = newMarkdown
     } else {
       // This may occur during tab switching but should not occur otherwise.
       console.warn('LISTEN_FOR_CONTENT_CHANGE: Cannot commit changes because not tab id was set!')
@@ -373,17 +415,50 @@ const setActiveHeadingAtLine = (line: number): void => {
 const updateActiveHeadingFromScroll = (): void => {
   const container = sourceCodeContainer.value
   if (!container || !editor.value) return
+  const tab = editorStore.tabs.find(tab => tab.id === tabId.value)
+  if (tab) tab.sourceScrollTop = container.scrollTop
   const top = container.getBoundingClientRect().top + 80
   const line = editor.value.lineAtHeight(top, 'window')
   setActiveHeadingAtLine(line)
 }
 
 const listenChange = (cm: CodeMirror.Editor) => {
-  cm.on('cursorActivity', (instance: CodeMirror.Editor) => {
+  cm.on('beforeChange', (_instance, change) => {
+    if (!loadingContent && isLocked()) change.cancel()
+  })
+  cm.on('changes', (instance) => {
     saveContent(instance)
+    if (!loadingContent) sourceSearch?.refresh()
+  })
+  cm.on('cursorActivity', (instance: CodeMirror.Editor) => {
+    const tab = editorStore.tabs.find(tab => tab.id === tabId.value)
+    if (tab && !loadingContent) tab.muyaIndexCursor = getMarkdownAndCursor(instance).cursor
     updateSelectionWordCount(instance)
     setActiveHeadingAtLine(instance.getCursor().line)
   })
+}
+
+const flushSource = () => {
+  if (editor.value) saveContent(editor.value)
+}
+const focusSource = () => editor.value?.focus()
+const copySource = () => {
+  if (editor.value) window.electron.clipboard.writeText(editor.value.getSelection())
+}
+const pasteSource = async() => {
+  if (isLocked()) return
+  const id = tabId.value
+  const value = await window.electron.clipboard.readText()
+  if (!isLocked() && tabId.value === id) editor.value?.replaceSelection(value, 'around', '+input')
+}
+const searchSource = (payload: unknown) => {
+  const { value, opt } = payload as { value: string; opt?: Parameters<SourceSearch['search']>[1] }
+  sourceSearch?.search(value, opt)
+}
+const findSource = (action: unknown) => sourceSearch?.find(action as 'previous' | 'next')
+const replaceSource = (payload: unknown) => {
+  const { value, opt } = payload as { value: string; opt?: { isSingle?: boolean } }
+  sourceSearch?.replace(value, opt?.isSingle)
 }
 
 // #3580: in Source Code mode the WYSIWYG container is hidden, so the
@@ -413,12 +488,13 @@ onMounted(() => {
   const codeMirrorConfig: Record<string, unknown> = {
     value: markdown,
     lineNumbers: sourceCodeLineNumbers.value,
-    autofocus: true,
+    autofocus: false,
     lineWrapping: true,
     styleActiveLine: true,
     extraKeys: getSourceExtraKeys(isWindows),
     direction: textDirection,
-    viewportMargin: Infinity
+    viewportMargin: Infinity,
+    readOnly: isLocked()
   }
 
   if (railscastsThemes.includes(theme.value)) {
@@ -434,15 +510,28 @@ onMounted(() => {
   bus.on('redo', handleRedo)
   bus.on('image-action', handleImageAction)
   bus.on('scroll-to-header', handleScrollToHeader)
+  bus.on('flush-active-editor', flushSource)
+  bus.on('editor-focus', focusSource)
+  bus.on('searchValue', searchSource)
+  bus.on('find-action', findSource)
+  bus.on('replaceValue', replaceSource)
+  bus.on('copyAsRich', copySource)
+  bus.on('copyAsHtml', copySource)
+  bus.on('pasteAsPlainText', pasteSource)
 
   // CodeMirror's line tree relies on object identity and must not be proxied by Vue.
   const codeMirrorInstance = markRaw(codeMirror(container, codeMirrorConfig))
+  preventSourceFocusScroll(codeMirrorInstance.getInputField())
 
   codeMirrorInstance.setOption('mode', markdownMathMode())
 
   codeMirrorInstance.on('contextmenu', (_cm: CodeMirror.Editor, event: Event) => {
     event.preventDefault()
     event.stopPropagation()
+    popupContextMenu([
+      { label: t('menu.edit.copy'), enabled: !!codeMirrorInstance.getSelection(), click: copySource },
+      { label: t('menu.edit.selectAll'), click: handleSelectAll }
+    ], { x: (event as MouseEvent).clientX, y: (event as MouseEvent).clientY })
   })
 
   if (isValidMuyaIndexCursor(muyaIndexCursor)) {
@@ -452,17 +541,23 @@ onMounted(() => {
     setCursorAtFirstLine(codeMirrorInstance)
   }
 
-  restoreSourceHistory(id, codeMirrorInstance)
+  const restoredState = restoreSourceHistory(id, codeMirrorInstance)
   editor.value = codeMirrorInstance
   tabId.value = id
+  sourceTransitionId = sourceTransitions.tokenFor(id)
+  committedMarkdown = codeMirrorInstance.getValue()
+  sourceSearch = new SourceSearch(
+    codeMirrorInstance,
+    result => editorStore.SEARCH(result),
+    line => scrollSourceEditorToLine(codeMirrorInstance, line, sourceCodeContainer.value),
+    isLocked
+  )
   updateSelectionWordCount(codeMirrorInstance)
 
   listenChange(codeMirrorInstance)
-  registerSourceView(async () => {
-    preferencesStore.SET_MODE({ type: 'sourceCode', checked: false })
-    preferencesStore.DISPATCH_EDITOR_VIEW_STATE({ sourceCode: false })
-    await nextTick()
-  })
+  registerSourceView(value => codeMirrorInstance.setOption('readOnly', value))
+  restoreSourceScroll(id, restoredState?.scrollTop ?? currentTab.value.sourceScrollTop)
+  focusSource()
 })
 
 onBeforeUnmount(() => {
@@ -472,7 +567,8 @@ onBeforeUnmount(() => {
     captureSourceHistory(
       tabId.value,
       editor.value,
-      editorStore.tabs.find((tab) => tab.id === tabId.value)?.markdown
+      editorStore.tabs.find((tab) => tab.id === tabId.value)?.markdown,
+      sourceCodeContainer.value?.scrollTop
     )
   }
   viewDestroyed.value = true
@@ -486,11 +582,21 @@ onBeforeUnmount(() => {
   editorStore.SET_SELECTION_WORD_COUNT(null)
   lastSelectionKey = ''
   bus.off('scroll-to-header', handleScrollToHeader)
+  bus.off('flush-active-editor', flushSource)
+  bus.off('editor-focus', focusSource)
+  bus.off('searchValue', searchSource)
+  bus.off('find-action', findSource)
+  bus.off('replaceValue', replaceSource)
+  bus.off('copyAsRich', copySource)
+  bus.off('copyAsHtml', copySource)
+  bus.off('pasteAsPlainText', pasteSource)
+  sourceSearch?.clear()
 
-  if (editor.value) {
+  if (editor.value && tabId.value === currentTab.value?.id && !editorStore.usesSourceEditor) {
     const { cursor, markdown: newMarkdown } = getMarkdownAndCursor(editor.value)
     bus.emit('file-changed', {
       reason: 'source-handoff',
+      sourceTransitionId,
       id: tabId.value,
       markdown: newMarkdown,
       muyaIndexCursor: cursor,
@@ -515,6 +621,13 @@ onBeforeUnmount(() => {
 .source-code .CodeMirror-gutters {
   border-right: none;
   background-color: transparent;
+}
+.source-search-match {
+  background: var(--highlightColor);
+}
+.source-search-active {
+  background: var(--highlightColor);
+  outline: 1px solid var(--themeColor);
 }
 .source-code .CodeMirror-activeline-background,
 .source-code .CodeMirror-activeline-gutter {

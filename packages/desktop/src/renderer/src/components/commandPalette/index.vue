@@ -56,7 +56,7 @@
                     class="title"
                     :title="item.title"
                   >{{ item.description
-                  }}{{ !canRun(item.id) ? ` · ${t('readingMode.unavailable')}` : '' }}<span
+                  }}{{ !canRun(item.id) ? ` · ${t(editorStore.isPreviewLayout ? 'documentLayout.unavailable' : 'readingMode.unavailable')}` : '' }}<span
                     v-if="item.detail"
                     class="detail"
                   >{{ item.detail }}</span></span>
@@ -155,7 +155,8 @@ const searcherBusy = ref(false)
 
 const commandCenterStore = useCommandCenterStore()
 const editorStore = useEditorStore()
-const canRun = (id: string) => !editorStore.currentFile?.readOnly || isReadingCommandAllowed(id)
+const canRun = (id: string) =>
+  !editorStore.documentEditingBlocked || isReadingCommandAllowed(id)
 
 const noResultsText = computed(() =>
   query.value.trim()

@@ -1084,6 +1084,14 @@
       "preview": "{name}、プレビュータブ"
     }
   },
+  "documentLayout": {
+    "title": "ドキュメントのレイアウト",
+    "wysiwyg": "ビジュアルエディター (WYSIWYG)",
+    "source": "Markdown ソース",
+    "preview": "プレビューのみ",
+    "openEditor": "ビジュアルエディターで開く",
+    "unavailable": "プレビューでは利用できません"
+  },
   "readingMode": {
     "title": "閲覧モード",
     "edit": "編集モード",

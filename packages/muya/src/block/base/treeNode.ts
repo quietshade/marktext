@@ -11,6 +11,7 @@ import { createDomNode } from '../../utils/dom';
 import { isHiddenByFold, refreshFoldVisibility } from '../folding';
 
 class TreeNode implements ILinkedNode {
+    private _disposed = false;
     prev: Nullable<TreeNode> = null;
 
     next: Nullable<TreeNode> = null;
@@ -39,6 +40,15 @@ class TreeNode implements ILinkedNode {
 
     get blockName() {
         return this.static.blockName;
+    }
+
+    get isDisposed() {
+        return this._disposed;
+    }
+
+    /** Release owned resources without changing document state or DOM placement. */
+    dispose() {
+        this._disposed = true;
     }
 
     get jsonState() {
@@ -236,7 +246,7 @@ class TreeNode implements ILinkedNode {
             return;
 
         if (this.parent)
-            this.parent.removeChild(this);
+            this.detach();
 
         // `parent.insertBefore` takes a Parent (the tree's internal linked
         // list operates on Parent), but TreeNode.insertInto is also called
@@ -245,14 +255,26 @@ class TreeNode implements ILinkedNode {
         parent.insertBefore(this as unknown as Parent, refBlock);
     }
 
-    remove(_source: ChangeSource = ChangeSource.User) {
+    remove(source: ChangeSource = ChangeSource.User) {
+        if (!this.muya.canMutate)
+            return;
+        this.detach(source);
+        this.dispose();
+        return this;
+    }
+
+    /** Unlink a node for a move; the caller retains its resource lifetime. */
+    detach(_source: ChangeSource = ChangeSource.User) {
         if (!this.muya.canMutate)
             return;
         if (!this.parent)
             return;
 
         const parent = this.parent;
-        parent.children.remove(this);
+        if (parent.children.contains(this))
+            parent.children.remove(this);
+        else
+            parent.attachments.remove(this);
         this.parent = null;
         this.domNode?.remove();
         this.domNode?.classList.remove(CLASS_NAMES.MU_FOLDED_CONTENT);

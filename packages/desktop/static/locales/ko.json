@@ -1084,6 +1084,14 @@
       "preview": "{name}, 미리보기 탭"
     }
   },
+  "documentLayout": {
+    "title": "문서 레이아웃",
+    "wysiwyg": "시각적 편집기 (WYSIWYG)",
+    "source": "Markdown 소스",
+    "preview": "미리 보기 전용",
+    "openEditor": "시각적 편집기에서 열기",
+    "unavailable": "미리 보기에서는 사용할 수 없습니다"
+  },
   "readingMode": {
     "title": "읽기 모드",
     "edit": "편집 모드",

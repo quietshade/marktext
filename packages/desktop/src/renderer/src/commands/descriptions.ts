@@ -1,6 +1,9 @@
 import { t } from '../i18n'
 
 const COMMAND_KEY_MAP: Record<string, string> = {
+  'view.layout-wysiwyg': 'documentLayout.wysiwyg',
+  'view.layout-source': 'documentLayout.source',
+  'view.layout-preview': 'documentLayout.preview',
   'view.read-only-mode': 'readingMode.title',
   'mt.hide': 'commands.mt.hide',
   'mt.hide-others': 'commands.mt.hideOthers',

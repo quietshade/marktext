@@ -1,6 +1,7 @@
 <template>
   <div
     class="editor-with-tabs"
+    :data-document-layout="editorStore.documentLayout"
     :style="{ 'max-width': `calc(100vw - ${effectiveSideBarWidth}px)` }"
   >
     <tabs v-show="showTabBar" />
@@ -19,20 +20,25 @@
           :muya-index-cursor="muyaIndexCursor"
           :text-direction="textDirection"
         />
+        <editor-search />
       </div>
     </div>
+    <document-mode />
     <tab-notifications />
   </div>
 </template>
 
 <script setup lang="ts">
 import { useLayoutStore } from '@/store/layout'
+import { useEditorStore } from '@/store/editor'
 import { storeToRefs } from 'pinia'
 import DocumentOutline from './outline.vue'
 import Tabs from './tabs.vue'
 import Editor from './editor.vue'
 import SourceCode from './sourceCode.vue'
 import TabNotifications from './notifications.vue'
+import DocumentMode from './documentMode.vue'
+import EditorSearch from '../search/index.vue'
 
 defineProps<{
   markdown: string
@@ -46,6 +52,7 @@ defineProps<{
 }>()
 
 const { effectiveSideBarWidth } = storeToRefs(useLayoutStore())
+const editorStore = useEditorStore()
 </script>
 
 <style scoped>
@@ -69,6 +76,7 @@ const { effectiveSideBarWidth } = storeToRefs(useLayoutStore())
   }
 }
 .document-body {
+  position: relative;
   flex: 1;
   min-width: 0;
   height: 100%;

@@ -1084,6 +1084,14 @@
       "preview": "{name}, voorbeeldtabblad"
     }
   },
+  "documentLayout": {
+    "title": "Documentindeling",
+    "wysiwyg": "Visuele editor (WYSIWYG)",
+    "source": "Markdown-bron",
+    "preview": "Alleen voorbeeld",
+    "openEditor": "Openen in visuele editor",
+    "unavailable": "Niet beschikbaar in voorbeeldweergave"
+  },
   "readingMode": {
     "title": "Leesmodus",
     "edit": "Bewerkingsmodus",

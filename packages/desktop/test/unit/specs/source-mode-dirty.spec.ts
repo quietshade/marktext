@@ -70,6 +70,17 @@ describe('useEditorStore LISTEN_FOR_CONTENT_CHANGE — source-mode dirty trackin
     expect(tab.isSaved).toBe(true)
   })
 
+  it('clears the source dirty marker only when undo returns to its saved checkpoint', () => {
+    const store = useEditorStore()
+    const tab = makeSavedTab(store)
+    store.LISTEN_FOR_CONTENT_CHANGE({ id: tab.id, markdown: 'hello world' })
+    expect(tab.isSaved).toBe(false)
+    store.LISTEN_FOR_CONTENT_CHANGE({ id: tab.id, markdown: 'hello' })
+    expect(tab.isSaved).toBe(true)
+    store.LISTEN_FOR_CONTENT_CHANGE({ id: tab.id, markdown: 'hello other edit' })
+    expect(tab.isSaved).toBe(false)
+  })
+
   it('leaves the WYSIWYG history-based path unchanged (history present, edit matches saved id)', () => {
     const store = useEditorStore()
     const tab = makeSavedTab(store)

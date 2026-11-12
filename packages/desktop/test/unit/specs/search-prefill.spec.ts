@@ -44,7 +44,7 @@ const loadComponent = (deps: Record<string, unknown>) => {
     'exports',
     'module',
     `const { _defineComponent, ref, computed, watch, onMounted, onBeforeUnmount,
-      nextTick, bus, FindCaseIcon, FindWordIcon, FindRegexIcon, useEditorStore,
+      nextTick, bus, FindCaseIcon, FindWordIcon, FindRegexIcon, useEditorStore, usePreferencesStore,
       storeToRefs, useI18n, debounce, ArrowDown, ArrowUp, RefreshRight, Switch, IconTooltip } = __deps
     ${js}
     return module.exports`
@@ -79,9 +79,10 @@ const makeBindings = () => {
     Switch: {},
     IconTooltip: {},
     useEditorStore: () => new Proxy({}, { get: () => () => {} }),
+    usePreferencesStore: () => ({ sourceCode: false }),
     storeToRefs: () => ({ currentFile }),
     useI18n: () => ({ t: (k: string) => k }),
-    debounce: (fn: (...a: unknown[]) => unknown) => fn
+    debounce: (fn: (...a: unknown[]) => unknown) => Object.assign(fn, { cancel: () => {} })
   }
   const comp = loadComponent(deps)
   const ret = comp.setup({}, { expose: () => {} })

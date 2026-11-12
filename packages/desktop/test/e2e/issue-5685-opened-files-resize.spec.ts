@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { _electron, type ElectronApplication, type Page } from 'playwright'
 import * as path from 'node:path'
-import { clickMenuById, getElectronPath, launchWithMarkdown, openProjectFolder, sendIpcToRenderer, waitForEditor } from './helpers'
+import { clickMenuById, createElectronEnvironment, getElectronPath, launchWithMarkdown, openProjectFolder, sendIpcToRenderer, waitForEditor } from './helpers'
 
 const rowSelector = '.side-bar .opened-files-list .opened-file'
 const resizeSelector = '.side-bar .opened-files-resize'
@@ -254,7 +254,8 @@ test.describe('#5685 sidebar opened files resize', () => {
     app = await _electron.launch({
       executablePath: getElectronPath(),
       args: [projectRoot, '--user-data-dir', userData, documentPath],
-      cwd: projectRoot
+      cwd: projectRoot,
+      env: createElectronEnvironment(process.env)
     })
     page = await app.firstWindow()
     await waitForEditor(page)

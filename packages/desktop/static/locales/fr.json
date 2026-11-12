@@ -1084,6 +1084,14 @@
       "preview": "{name}, onglet d’aperçu"
     }
   },
+  "documentLayout": {
+    "title": "Disposition du document",
+    "wysiwyg": "Éditeur visuel (WYSIWYG)",
+    "source": "Source Markdown",
+    "preview": "Aperçu seul",
+    "openEditor": "Ouvrir dans l’éditeur visuel",
+    "unavailable": "Indisponible dans l’aperçu"
+  },
   "readingMode": {
     "title": "Mode lecture",
     "edit": "Mode édition",

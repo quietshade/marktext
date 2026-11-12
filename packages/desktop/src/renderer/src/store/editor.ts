@@ -1,4 +1,5 @@
 import equal from 'deep-equal'
+import { getDocumentCapabilities, isAvailableDocumentLayout, isDocumentReadOnly, resolveDocumentLayout, type AvailableDocumentLayout } from '@shared/types/documentLayout'
 import { prepareReading, applyReadOnly } from '../services/documentMode'
 import bus from '../bus'
 import { getUniqueId, deepClone } from '../util'
@@ -152,15 +153,20 @@ export interface EditorState {
 }
 
 const autoSaveTimers = new Map<string, ReturnType<typeof setTimeout>>()
+// Source undo uses exact saved text; restored dirty buffers have no checkpoint until saved.
+const sourceSavePoints = new WeakMap<IFileState, string>()
 
 interface OpenIntent {
   focus: boolean
   preview: boolean
+  requestId?: number
 }
 
 // A pathname can change from preview to pinned while its file is loading, so
 // focus and preview intent must survive until separate consumers read them.
 const openIntents = new Map<string, OpenIntent>()
+// Pinned opens must survive later preview requests, including queued IPC delivery.
+const promotedSidebarRequests = new Set<number>()
 let sidebarRequestSequence = 0
 let latestSidebarRequest: { id: number; pathname: string } | null = null
 
@@ -176,6 +182,31 @@ export const useEditorStore = defineStore('editor', {
   }),
 
   getters: {
+    documentLayout(state): AvailableDocumentLayout {
+      return resolveDocumentLayout(state.currentFile?.documentLayout, usePreferencesStore().sourceCode)
+    },
+    isSourceLayout(): boolean {
+      return this.documentLayout === 'source'
+    },
+    isPreviewLayout(): boolean {
+      return this.documentLayout === 'preview'
+    },
+    documentCapabilities(): ReturnType<typeof getDocumentCapabilities> {
+      return getDocumentCapabilities(this.currentFile && {
+        documentLayout: this.documentLayout,
+        readOnly: this.currentFile.readOnly,
+        modeChanging: this.currentFile.modeChanging
+      })
+    },
+    usesSourceEditor(): boolean {
+      return this.documentCapabilities.usesCodeMirror
+    },
+    documentReadOnly(state): boolean {
+      return isDocumentReadOnly(state.currentFile)
+    },
+    documentEditingBlocked(): boolean {
+      return this.documentReadOnly || !!this.currentFile?.modeChanging
+    },
     /** Title for an exported file: the shallowest of the first few headings. */
     documentTitle(state): string {
       const { listToc } = state
@@ -195,6 +226,19 @@ export const useEditorStore = defineStore('editor', {
   },
 
   actions: {
+    SET_DOCUMENT_LAYOUT(value: unknown): void {
+      const tab = this.currentFile
+      if (!tab || tab.modeChanging || !isAvailableDocumentLayout(value) || value === this.documentLayout) return
+      this.flushActiveEditor()
+      tab.documentLayout = value
+      if (value === 'preview') {
+        clearTimeout(autoSaveTimers.get(tab.id))
+        autoSaveTimers.delete(tab.id)
+      }
+      applyReadOnly(this.documentReadOnly)
+      debouncedSendBufferedState()
+    },
+
     async SET_READ_ONLY(tabId: string, value: boolean): Promise<void> {
       const tab = this.tabs.find((item) => item.id === tabId)
       if (!tab || tab.modeChanging || tab.readOnly === value) return
@@ -203,31 +247,14 @@ export const useEditorStore = defineStore('editor', {
       if (timer) clearTimeout(timer)
       autoSaveTimers.delete(tabId)
       try {
-        if (value && this.currentFile?.id === tabId) await prepareReading()
+        if (this.currentFile?.id === tabId) {
+          this.flushActiveEditor()
+          if (value) await prepareReading()
+        }
         await window.electron.ipcRenderer.invoke('mt::set-document-read-only', tabId, value)
         if (!this.tabs.includes(tab)) return
-        if (!value && this.currentFile?.id === tabId) {
-          const preferences = usePreferencesStore()
-          preferences.SET_MODE({ type: 'sourceCode', checked: false })
-          preferences.DISPATCH_EDITOR_VIEW_STATE({ sourceCode: false })
-        }
         tab.readOnly = value
-        if (this.currentFile?.id === tabId) applyReadOnly(value)
-        if (
-          !value &&
-          !tab.isSaved &&
-          !tab.diskConflict &&
-          tab.pathname &&
-          usePreferencesStore().autoSave
-        ) {
-          this.HANDLE_AUTO_SAVE(tab)
-          this.pushTabNotification({
-            tabId,
-            msg: t('readingMode.resumed'),
-            style: 'info',
-            exclusiveType: 'reading_mode'
-          })
-        }
+        if (this.currentFile?.id === tabId) applyReadOnly(this.documentReadOnly)
         if (value && !tab.isSaved) {
           this.pushTabNotification({
             tabId,
@@ -238,7 +265,7 @@ export const useEditorStore = defineStore('editor', {
         }
         debouncedSendBufferedState()
       } catch (error) {
-        if (this.currentFile?.id === tabId) applyReadOnly(tab.readOnly)
+        if (this.currentFile?.id === tabId) applyReadOnly(this.documentReadOnly)
         await window.electron.ipcRenderer
           .invoke('mt::set-document-read-only', tabId, tab.readOnly)
           .catch(console.error)
@@ -267,7 +294,7 @@ export const useEditorStore = defineStore('editor', {
           const tab = this.tabs.find((item) => item.id === id)
           if (tab) tab.readOnly = false
         }
-        if (this.currentFile && ids.includes(this.currentFile.id)) applyReadOnly(false)
+        if (this.currentFile && ids.includes(this.currentFile.id)) applyReadOnly(this.documentReadOnly)
         debouncedSendBufferedState()
       })
     },
@@ -300,6 +327,8 @@ export const useEditorStore = defineStore('editor', {
       const tabs: IFileState[] = bufferedEditorState.tabs.map((tab) => {
         const fileState = createDocumentState({
           ...tab,
+          documentLayout: usePreferencesStore().restoreLayoutState && isAvailableDocumentLayout(tab.documentLayout)
+            ? tab.documentLayout : undefined,
           readOnly:
             tab.readOnly ??
             (!!tab.pathname &&
@@ -637,7 +666,7 @@ export const useEditorStore = defineStore('editor', {
     },
 
     FILE_SAVE(): void {
-      if (this.currentFile?.readOnly || this.currentFile?.modeChanging) return
+      if (this.documentEditingBlocked) return
       if (!this.currentFile) return
       this.flushActiveEditor()
       const projectStore = useProjectStore()
@@ -667,7 +696,7 @@ export const useEditorStore = defineStore('editor', {
     },
 
     FILE_SAVE_AS(): void {
-      if (this.currentFile?.readOnly || this.currentFile?.modeChanging) return
+      if (this.documentEditingBlocked) return
       if (!this.currentFile) return
       this.flushActiveEditor()
       const projectStore = useProjectStore()
@@ -722,6 +751,7 @@ export const useEditorStore = defineStore('editor', {
         }
         if (tab) {
           Object.assign(tab, { filename, pathname, isPendingCreation: false })
+          if (typeof fileInfo.savedMarkdown === 'string') sourceSavePoints.set(tab, fileInfo.savedMarkdown)
           if ('savedMarkdown' in fileInfo && fileInfo.savedMarkdown === tab.markdown)
             tab.isSaved = true
           debouncedSendBufferedState()
@@ -730,6 +760,7 @@ export const useEditorStore = defineStore('editor', {
 
       window.electron.ipcRenderer.on('mt::tab-saved', (_, tabId, savedMarkdown) => {
         const tab = this.tabs.find((f) => f.id === tabId)
+        if (tab && typeof savedMarkdown === 'string') sourceSavePoints.set(tab, savedMarkdown)
         if (tab && (savedMarkdown === undefined || tab.markdown === savedMarkdown)) {
           const lastEditIndex = tab.history.lastEditIndex
           if (
@@ -976,9 +1007,10 @@ export const useEditorStore = defineStore('editor', {
         if (oldCurrentFile) {
           this.flushActiveEditor()
         }
+        currentFile.documentLayout = resolveDocumentLayout(currentFile.documentLayout, usePreferencesStore().sourceCode)
         window.DIRNAME = pathname ? window.path.dirname(pathname) : ''
         this.currentFile = currentFile
-        applyReadOnly(currentFile.readOnly)
+        applyReadOnly(this.documentReadOnly)
         this.selectionWordCount = null
         didUpdateCurrentFile = true
         // Slugs belong to the old document; the next selection-change re-seeds.
@@ -1074,6 +1106,14 @@ export const useEditorStore = defineStore('editor', {
     },
 
     LISTEN_FOR_NEW_TAB(): void {
+      window.electron.ipcRenderer.on('mt::sidebar-open-failed', (_, requestId, pathname) => {
+        promotedSidebarRequests.delete(requestId)
+        this.SETTLE_SIDEBAR_OPEN(requestId, pathname)
+        // A delayed failure must not erase the intent of a newer open of the same path.
+        if (this.PEEK_OPEN_INTENT(pathname)?.requestId === requestId) {
+          this.DISCARD_OPEN_INTENT(pathname)
+        }
+      })
       window.electron.ipcRenderer.on(
         'mt::open-new-tab',
         (_, markdownDocument, options = {}, selected = true) => {
@@ -1344,8 +1384,8 @@ export const useEditorStore = defineStore('editor', {
       this.UPDATE_CURRENT_FILE(nextTab)
     },
 
-    SET_OPEN_INTENT(pathname: string, focus: boolean, preview = false): void {
-      openIntents.set(pathname, { focus, preview })
+    SET_OPEN_INTENT(pathname: string, focus: boolean, preview = false, requestId?: number): void {
+      openIntents.set(pathname, { focus, preview, requestId })
     },
 
     PEEK_OPEN_INTENT(pathname: string | null | undefined): OpenIntent | null {
@@ -1384,11 +1424,17 @@ export const useEditorStore = defineStore('editor', {
 
       const requestId = ++sidebarRequestSequence
       latestSidebarRequest = { id: requestId, pathname }
-      this.SET_OPEN_INTENT(pathname, false, preview)
+      this.SET_OPEN_INTENT(pathname, false, preview, requestId)
       return requestId
     },
 
     PROMOTE_SIDEBAR_OPEN(pathname: string): void {
+      if (latestSidebarRequest && window.fileUtils.isSamePathSync(latestSidebarRequest.pathname, pathname)) {
+        const { id } = latestSidebarRequest
+        promotedSidebarRequests.add(id)
+        latestSidebarRequest = null
+        window.electron.ipcRenderer.send('mt::promote-pending-preview', id)
+      }
       const intent = this.PEEK_OPEN_INTENT(pathname)
       if (!intent) {
         this.SET_OPEN_INTENT(pathname, true)
@@ -1435,6 +1481,10 @@ export const useEditorStore = defineStore('editor', {
       }
       const next = tabs[nextTabIndex]
       if (!next) return
+      if (options.preview !== true) {
+        next.isPreview = false
+        window.electron.ipcRenderer.send('mt::add-recently-used-document', filePath)
+      }
       this.UPDATE_CURRENT_FILE(next)
       if (options.readOnly === true && !next.readOnly) {
         void this.SET_READ_ONLY(next.id, true)
@@ -1533,8 +1583,10 @@ export const useEditorStore = defineStore('editor', {
       const { pathname } = markdownDocument
       const requestId = options.requestId
       const requestedPreviewMode = options.preview === true
+      const wasPromoted = typeof requestId === 'number' && promotedSidebarRequests.delete(requestId)
       if (
         requestedPreviewMode &&
+        !wasPromoted &&
         typeof requestId === 'number' &&
         !this.IS_LATEST_SIDEBAR_OPEN(requestId, pathname ?? '')
       ) {
@@ -1557,7 +1609,7 @@ export const useEditorStore = defineStore('editor', {
       const preferencesStore = usePreferencesStore()
       const openIntent = this.PEEK_OPEN_INTENT(pathname)
       const preview =
-        (openIntent?.preview ?? requestedPreviewMode) && preferencesStore.openFilesInPreviewMode
+        !wasPromoted && (openIntent?.preview ?? requestedPreviewMode) && preferencesStore.openFilesInPreviewMode
 
       let keepTabBarState = false
       if (currentFile) {
@@ -1751,9 +1803,10 @@ export const useEditorStore = defineStore('editor', {
       }
 
       const tab = this.tabs[this.tabIdToIndex[id]]
-      if (!tab || tab.readOnly) return
+      if (!tab || isDocumentReadOnly(tab)) return
 
       const { pathname, markdown: oldMarkdown, trimTrailingNewline } = tab
+      if (tab.isSaved) sourceSavePoints.set(tab, oldMarkdown)
 
       markdown = adjustTrailingNewlines(markdown, trimTrailingNewline)
       tab.markdown = markdown
@@ -1787,14 +1840,17 @@ export const useEditorStore = defineStore('editor', {
         (lastEditIndex === -1 &&
           tab.lastSavedHistoryId !== -1 &&
           tab.lastSavedHistoryId !== tab.history.lastInitIndex) // Edge Case: Undo to original content (lastEditIndex === -1) after saving means we cant use the lastEditIndex. Compare it against the lastInitIndex instead.
-      const isDirty = history === undefined ? markdown !== oldMarkdown : historyMarksDirty
+      const checkpoint = sourceSavePoints.get(tab)
+      const isDirty = history === undefined
+        ? checkpoint === undefined ? !tab.isSaved || markdown !== oldMarkdown : markdown !== checkpoint
+        : historyMarksDirty
       if (isDirty) {
         tab.isPreview = false
         tab.isSaved = false
         if (pathname && autoSave && !tab.modeChanging) {
           this.HANDLE_AUTO_SAVE(tab)
         }
-      } else if (history !== undefined && tab.lastSavedHistoryId !== -1) {
+      } else if (history === undefined || tab.lastSavedHistoryId !== -1) {
         // Check here is to prevent it from overriding a restored .isSaved state
         tab.isSaved = true
       }
@@ -1820,7 +1876,7 @@ export const useEditorStore = defineStore('editor', {
         autoSaveTimers.delete(id)
 
         const tab = this.tabs.find((t) => t.id === id)
-        if (tab && !tab.isSaved && !tab.readOnly && !tab.modeChanging && !tab.diskConflict) {
+        if (tab && !tab.isSaved && !isDocumentReadOnly(tab) && !tab.modeChanging && !tab.diskConflict) {
           const defaultPath = getRootFolderFromState(projectStore)
           window.electron.ipcRenderer.send(
             'mt::response-file-save',
@@ -1948,7 +2004,7 @@ export const useEditorStore = defineStore('editor', {
     },
 
     SET_LINE_ENDING(lineEnding: LineEnding | string): void {
-      if (this.currentFile?.readOnly || this.currentFile?.modeChanging) return
+      if (this.documentEditingBlocked) return
       if (!this.currentFile) return
       const { lineEnding: oldLineEnding } = this.currentFile
       if (lineEnding !== oldLineEnding) {
@@ -1971,7 +2027,7 @@ export const useEditorStore = defineStore('editor', {
 
     LISTEN_FOR_SET_ENCODING(): void {
       bus.on('mt::set-file-encoding', (encodingName) => {
-        if (this.currentFile?.readOnly || this.currentFile?.modeChanging) return
+        if (this.documentEditingBlocked) return
         if (!this.currentFile) return
         const { encoding } = this.currentFile.encoding
         if (encoding !== encodingName) {
@@ -1985,7 +2041,7 @@ export const useEditorStore = defineStore('editor', {
 
     LISTEN_FOR_SET_FINAL_NEWLINE(): void {
       bus.on('mt::set-final-newline', (value) => {
-        if (this.currentFile?.readOnly || this.currentFile?.modeChanging) return
+        if (this.documentEditingBlocked) return
         if (!this.currentFile) return
         const { trimTrailingNewline } = this.currentFile
         if (trimTrailingNewline !== value) {
@@ -2324,6 +2380,7 @@ function toSerializableValue<T>(value: T | null | undefined, fallback: T | null 
 
 interface BufferedTabState {
   readOnly?: boolean
+  documentLayout?: AvailableDocumentLayout
   diskMissing?: boolean
   diskConflict?: boolean
   isPendingCreation?: boolean
@@ -2345,6 +2402,7 @@ interface BufferedTabState {
 const createBufferedTabState = (tab: Partial<IFileState> & { id: string }): BufferedTabState => {
   return {
     readOnly: typeof tab.readOnly === 'boolean' ? tab.readOnly : undefined,
+    documentLayout: isAvailableDocumentLayout(tab.documentLayout) ? tab.documentLayout : undefined,
     diskMissing: tab.diskMissing,
     diskConflict: tab.diskConflict,
     id: tab.id,

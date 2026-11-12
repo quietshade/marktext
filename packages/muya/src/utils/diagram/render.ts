@@ -1,4 +1,60 @@
+import logger from '../logger';
 import loadRenderer from './index';
+
+const debug = logger('diagram-render:');
+
+function ownDiagramCleanup(signal: AbortSignal | undefined, cleanup: () => void) {
+    if (!signal)
+        return;
+    let released = false;
+    const release = () => {
+        if (released)
+            return;
+        released = true;
+        signal.removeEventListener('abort', release);
+        try {
+            cleanup();
+        }
+        catch (error) {
+            debug.warn(`diagram cleanup failed: ${String(error)}`);
+        }
+    };
+    if (signal.aborted)
+        release();
+    else
+        signal.addEventListener('abort', release, { once: true });
+    return release;
+}
+
+async function createVegaOwner(signal: AbortSignal) {
+    const { View } = await import('vega');
+    let dispose = () => {};
+    class OwnedView extends View {
+        private _releasedByOwner = false;
+
+        constructor(...args: ConstructorParameters<typeof View>) {
+            if (signal.aborted)
+                throw new DOMException('Diagram render was cancelled', 'AbortError');
+            super(...args);
+            dispose = ownDiagramCleanup(signal, () => this.finalize())!;
+        }
+
+        override initialize(...args: Parameters<InstanceType<typeof View>['initialize']>) {
+            if (signal.aborted)
+                throw new DOMException('Diagram render was cancelled', 'AbortError');
+            return super.initialize(...args);
+        }
+
+        override finalize() {
+            if (!this._releasedByOwner) {
+                this._releasedByOwner = true;
+                super.finalize();
+            }
+            return this;
+        }
+    }
+    return { options: { viewClass: OwnedView }, dispose: () => dispose() };
+}
 
 // Concurrent Mermaid renders can share Date.now()-based IDs; provide unique IDs
 // to prevent diagrams drawing into the same element (#5023).
@@ -62,9 +118,17 @@ export function finalizeRenderedDiagram(target: HTMLElement, fallbackLabel: stri
     if (applyFinalizations(target, fallbackLabel))
         return () => {};
 
-    const observer = new MutationObserver(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let observer: MutationObserver | undefined;
+    const cancel = () => {
+        clearTimeout(timer);
+        observer?.disconnect();
+        timer = undefined;
+        observer = undefined;
+    };
+    observer = new MutationObserver(() => {
         if (applyFinalizations(target, fallbackLabel))
-            observer.disconnect();
+            cancel();
     });
     observer.observe(target, {
         childList: true,
@@ -73,13 +137,10 @@ export function finalizeRenderedDiagram(target: HTMLElement, fallbackLabel: stri
         attributeFilter: ['width', 'height'],
     });
     // Safety net so the observer can't leak if the diagram never renders.
-    const timer = setTimeout(() => observer.disconnect(), 5000);
+    timer = setTimeout(cancel, 5000);
 
     // The render owner must cancel observation when its target is replaced.
-    return () => {
-        clearTimeout(timer);
-        observer.disconnect();
-    };
+    return cancel;
 }
 
 const FRONTMATTER = /^---\r?\n[\s\S]*?\r?\n---\r?\n/;
@@ -96,6 +157,8 @@ export function withMermaidInit(code: string, config: Record<string, unknown>): 
 }
 
 export interface IRenderOptions {
+    /** When supplied, owns this request's renderer resources, not the shared renderer module. */
+    signal?: AbortSignal;
     type: string;
     code: string;
     target: HTMLElement;
@@ -121,56 +184,79 @@ export async function renderDiagramForExport({
     await renderDiagram({ ...options, code });
 }
 
-export async function renderDiagram({
-    type,
-    code,
-    target,
-    vegaTheme,
-    mermaidTheme,
-    plantumlServer,
-    sequenceTheme,
-}: IRenderOptions) {
-    const render = await loadRenderer(type);
-    const options = {};
-    if (type === 'vega-lite') {
-        Object.assign(options, {
-            actions: false,
-            tooltip: false,
-            renderer: 'svg',
-            theme: vegaTheme,
-            ast: true,
-        });
+async function renderVega(render: Awaited<ReturnType<typeof loadRenderer>>, { target, code, vegaTheme, signal }: IRenderOptions) {
+    const owner = signal ? await createVegaOwner(signal) : undefined;
+    if (signal?.aborted)
+        return;
+    const options = { actions: false, tooltip: false, renderer: 'svg', theme: vegaTheme, ast: true, ...owner?.options };
+    try {
+        const result = await render(target, JSON.parse(code), options);
+        ownDiagramCleanup(signal, () => result?.finalize?.());
     }
-    else if (type === 'sequence') {
-        Object.assign(options, { theme: sequenceTheme });
+    catch (error) {
+        owner?.dispose();
+        throw error;
+    }
+}
+
+async function renderMermaid(render: Awaited<ReturnType<typeof loadRenderer>>, { code, target, mermaidTheme, signal }: IRenderOptions) {
+    render.initialize({ startOnLoad: false, securityLevel: 'strict', theme: mermaidTheme });
+    await render.parse(code);
+    if (signal?.aborted)
+        return;
+    const { svg, bindFunctions } = await render.render(`mu-mermaid-${++mermaidRenderCount}`, code, target);
+    if (signal?.aborted)
+        return;
+    target.innerHTML = svg;
+    bindFunctions?.(target);
+    ownDiagramCleanup(signal, () => target.replaceChildren());
+}
+
+export async function renderDiagram(request: IRenderOptions) {
+    const {
+        type,
+        code,
+        target,
+        plantumlServer,
+        sequenceTheme,
+        signal,
+    } = request;
+    if (signal?.aborted)
+        return;
+    const render = await loadRenderer(type);
+    if (signal?.aborted)
+        return;
+    const options = {};
+    if (type === 'sequence') {
+        Object.assign(options, { theme: sequenceTheme, signal });
     }
 
     if (type === 'plantuml') {
         const diagram = render.parse(code, plantumlServer);
+        if (signal?.aborted)
+            return;
         target.innerHTML = '';
         diagram.insertImgElement(target);
     }
     else if (type === 'vega-lite') {
-        await render(target, JSON.parse(code), options);
+        await renderVega(render, request);
     }
     else if (type === 'flowchart' || type === 'sequence') {
         const diagram = render.parse(code);
+        if (signal?.aborted)
+            return;
         target.innerHTML = '';
-        diagram.drawSVG(target, options);
+        if (type === 'flowchart') {
+            ownDiagramCleanup(signal, () => diagram.clean?.());
+            diagram.drawSVG(target, options);
+        }
+        else {
+            const dispose = diagram.drawSVG(target, options);
+            if (typeof dispose === 'function')
+                ownDiagramCleanup(signal, dispose);
+        }
     }
     else if (type === 'mermaid') {
-        render.initialize({
-            startOnLoad: false,
-            securityLevel: 'strict',
-            theme: mermaidTheme,
-        });
-        await render.parse(code);
-        const { svg, bindFunctions } = await render.render(
-            `mu-mermaid-${++mermaidRenderCount}`,
-            code,
-            target,
-        );
-        target.innerHTML = svg;
-        bindFunctions?.(target);
+        await renderMermaid(render, request);
     }
 }

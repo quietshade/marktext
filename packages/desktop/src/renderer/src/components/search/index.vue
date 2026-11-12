@@ -8,6 +8,7 @@
       class="plain-button left-arrow"
       :aria-label="t('menu.edit.replace')"
       :aria-expanded="type === 'replace'"
+      :disabled="locked"
       @click="toggleSearchType"
     >
       <el-icon
@@ -106,7 +107,7 @@
         </div>
       </section>
       <section
-        v-if="type === 'replace'"
+        v-if="type === 'replace' && !locked"
         class="replace"
       >
         <div class="input-wrapper replace-input">
@@ -175,12 +176,17 @@ const searchErrorMsg = ref('')
 const search = ref<HTMLInputElement | null>(null)
 
 const { currentFile } = storeToRefs(editorStore)
+const locked = computed(() => editorStore.documentEditingBlocked)
 watch(
-  () => currentFile.value?.readOnly,
+  locked,
   (value) => {
-    if (value) emptySearch(false)
+    if (value) type.value = 'search'
   }
 )
+watch(() => currentFile.value?.id, () => emptySearch(false))
+watch(() => editorStore.documentLayout, () => {
+  if (showSearch.value) nextTick(searchFn)
+})
 const searchMatches = computed(() => currentFile.value?.searchMatches)
 
 watch(searchValue, () => {
@@ -230,6 +236,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  debouncedSearchFn.cancel()
   bus.off('find', listenFind)
   bus.off('replace', listenReplace)
   bus.off('findNext', listenFindNext)
@@ -255,7 +262,6 @@ const toggleCtrl = (ctrl: 'isCaseSensitive' | 'isWholeWord' | 'isRegexp') => {
 }
 
 const listenFind = () => {
-  if (currentFile.value?.readOnly) return
   prefillFromSelection()
   showSearch.value = true
   type.value = 'search'
@@ -271,18 +277,18 @@ const listenFind = () => {
 }
 
 const listenReplace = () => {
-  if (currentFile.value?.readOnly) return
+  if (locked.value) return
   prefillFromSelection()
   showSearch.value = true
   type.value = 'replace'
 }
 
 const listenFindNext = () => {
-  if (!currentFile.value?.readOnly) find('next')
+  find('next')
 }
 
 const listenFindPrev = () => {
-  if (!currentFile.value?.readOnly) find('previous')
+  find('previous')
 }
 
 const docKeyup = (event: KeyboardEvent) => {
@@ -301,6 +307,7 @@ const docClick = (event: MouseEvent) => {
 const blurSearch = () => emptySearch()
 
 const emptySearch = (selectHighlight = true) => {
+  debouncedSearchFn.cancel()
   showSearch.value = false
   searchValue.value = ''
   replaceValue.value = ''
@@ -308,7 +315,7 @@ const emptySearch = (selectHighlight = true) => {
 }
 
 const toggleSearchType = () => {
-  if (currentFile.value?.readOnly) return
+  if (locked.value) return
   type.value = type.value === 'search' ? 'replace' : 'search'
 }
 
@@ -358,6 +365,7 @@ const searchFn = () => {
 const debouncedSearchFn = debounce(searchFn, 150)
 
 const replace = (isSingle = true) => {
+  if (locked.value) return
   bus.emit('replaceValue', {
     value: replaceValue.value,
     opt: {

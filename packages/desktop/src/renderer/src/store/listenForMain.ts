@@ -6,8 +6,8 @@ import { useLayoutStore } from './layout'
 export const useListenForMainStore = defineStore('listenForMain', () => {
   function EDITOR_EDIT_ACTION(type: string): void {
     if (
-      useEditorStore().currentFile?.readOnly &&
-      !['copy', 'copyAsRich', 'copyAsHtml', 'selectAll', 'findInFolder'].includes(type)
+      useEditorStore().documentEditingBlocked &&
+      !['copy', 'copyAsRich', 'copyAsHtml', 'selectAll', 'findInFolder', 'find', 'findNext', 'findPrev'].includes(type)
     )
       return
     const layoutStore = useLayoutStore()
@@ -21,6 +21,9 @@ export const useListenForMainStore = defineStore('listenForMain', () => {
   }
 
   function LISTEN_FOR_EDIT(): void {
+    window.electron.ipcRenderer.on('mt::set-document-layout', (_e, layout) => {
+      useEditorStore().SET_DOCUMENT_LAYOUT(layout)
+    })
     window.electron.ipcRenderer.on('mt::editor-edit-action', (_e, type) => {
       EDITOR_EDIT_ACTION(type as string)
     })
@@ -47,9 +50,11 @@ export const useListenForMainStore = defineStore('listenForMain', () => {
 
   function LISTEN_FOR_PARAGRAPH_INLINE_STYLE(): void {
     window.electron.ipcRenderer.on('mt::editor-paragraph-action', (_e, { type }) => {
+      if (useEditorStore().documentEditingBlocked) return
       bus.emit('paragraph', type)
     })
     window.electron.ipcRenderer.on('mt::editor-format-action', (_e, { type }) => {
+      if (useEditorStore().documentEditingBlocked) return
       bus.emit('format', type)
     })
   }

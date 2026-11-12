@@ -1084,6 +1084,14 @@
       "preview": "{name}, preview tab"
     }
   },
+  "documentLayout": {
+    "title": "Document Layout",
+    "wysiwyg": "Visual Editor (WYSIWYG)",
+    "source": "Markdown Source",
+    "preview": "Preview Only",
+    "openEditor": "Open in Visual Editor",
+    "unavailable": "Unavailable in Preview Only"
+  },
   "readingMode": {
     "title": "Reading Mode",
     "edit": "Edit Mode",
